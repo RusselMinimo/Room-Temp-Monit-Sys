@@ -1,35 +1,34 @@
 import { NextRequest } from "next/server";
-import { subscribeToReadings } from "@/lib/bus";
+import { subscribeToAuthLogs, listAuthLogs } from "@/lib/auth-logs";
 import { getSession, isAdminEmail } from "@/lib/auth";
-import { getAssignedDeviceId } from "@/lib/assignments";
 
 export const dynamic = "force-dynamic";
 
 export async function GET(_req: NextRequest) {
   const session = getSession();
-  const isAdmin = session ? isAdminEmail(session.email) : false;
-  const assigned = session && !isAdmin ? getAssignedDeviceId(session.email) : undefined;
+  
+  // Only admins can access auth logs
+  if (!session || !isAdminEmail(session.email)) {
+    return new Response("Unauthorized", { status: 401 });
+  }
+
   const stream = new ReadableStream<Uint8Array>({
     start(controller) {
       const encoder = new TextEncoder();
       const send = (event: string) => controller.enqueue(encoder.encode(event));
 
+      // Send initial data (latest logs)
+      const initialLogs = listAuthLogs(200);
+      if (initialLogs.length > 0) {
+        send(`data: ${JSON.stringify({ type: "initial", logs: initialLogs })}\n\n`);
+      }
+
       // Heartbeat to keep the connection alive (every 15s)
       const heartbeat = setInterval(() => send(`: ping\n\n`), 15000);
 
-      const unsubscribe = subscribeToReadings((reading) => {
-        // Scope events for non-admins to their assigned device.
-        // Admin dashboard should not receive demo readings.
-        if (!isAdmin) {
-          if (reading.isDemo === true) {
-            // allow
-          } else if (!assigned || reading.deviceId !== assigned) {
-            return; // drop events for other rooms
-          }
-        } else if (reading.isDemo === true) {
-          return; // drop demo events for admin
-        }
-        const data = JSON.stringify(reading);
+      // Subscribe to new auth log events
+      const unsubscribe = subscribeToAuthLogs((logEntry) => {
+        const data = JSON.stringify({ type: "update", log: logEntry });
         send(`data: ${data}\n\n`);
       });
 
@@ -41,7 +40,6 @@ export async function GET(_req: NextRequest) {
       };
 
       // Abort support (when client disconnects)
-      // If available in this runtime, hook into the abort signal to close cleanly.
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const anyReq: any = _req as any;
       if (anyReq?.signal && typeof anyReq.signal.addEventListener === "function") {
@@ -60,5 +58,4 @@ export async function GET(_req: NextRequest) {
     },
   });
 }
-
 

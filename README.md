@@ -19,6 +19,23 @@ npm run dev
 
 Visit `http://localhost:3000`. As soon as an authentic reading arrives, "Demo Mode" disappears.
 
+## Authentication & Sign Up
+
+
+- Override via `.env.local`:
+
+  | Variable                  | Description                                                   |
+  |---------------------------|---------------------------------------------------------------|
+  | `AUTH_EMAIL`              | Seed admin email                                              |
+  | `AUTH_PASSWORD`           | Plain-text password (hashed with salted SHA-256 in-memory)    |
+  | `AUTH_PASSWORD_HASH`      | Optional hex-encoded SHA-256 digest (legacy fallback)         |
+  | `AUTH_SESSION_TTL_SECONDS`| Session lifetime (defaults to 8 hours)                        |
+
+- Users can self-register at `/signup`. Accounts are hashed with random salts and persisted to `data/users.json` (Git-ignored). Back up or pre-seed this file if you want additional admins beyond the default `.env.local` credentials. Set `"role": "admin"` on any account inside the JSON file if you need it to access `/admin`.
+- Login is enforced on dashboard routes (`/admin-dashboard` for admins, `/user-dashboard` for regular users). Successful logins issue HTTP-only cookies; logout instantly removes the server-side session entry.
+- Authentication events (signups, logins, logouts, failures) are captured in `data/auth-logs.json`. Visit `/admin` while signed in as the admin user (email from `AUTH_EMAIL`) to review the latest 200 entries.
+- Active session tokens are stored in `data/sessions.json` so that login cookies remain valid across server restarts. Delete this file to force all users to reauthenticate.
+
 ## Sending Readings Manually
 
 ```bash
@@ -29,6 +46,48 @@ curl "http://localhost:3000/api/ingest" \
 ```
 
 If `IOT_API_KEY` is set inside `.env.local`, add `?key=...` to the URL or send an `x-api-key` header.
+
+## Wi-Fi Connectivity
+
+Any Wi-Fi capable microcontroller (ESP32, ESP8266, Pico W, etc.) can POST to `/api/ingest`. The firmware loop simply needs to:
+
+1. Connect to the same SSID as the dashboard (or ensure outbound HTTPS to your deployed host).
+2. Collect sensor values (e.g., DHT22, BME280) and optional RSSI.
+3. Send a JSON payload:
+
+```ts
+await fetch("https://YOUR_HOST/api/ingest?key=YOUR_API_KEY", {
+  method: "POST",
+  headers: { "content-type": "application/json" },
+  body: JSON.stringify({
+    deviceId: "Room-Temperature",
+    temperatureC: 24.6,
+    humidityPct: 48,
+    rssi: -52,
+  }),
+});
+```
+
+The dashboard polls `/api/readings` every second and also listens to `/api/stream`, so each Wi-Fi reading appears almost instantly on the chart.
+
+## Alerts & Notifications
+
+- Configure per-device low/high thresholds on the dashboard (Devices section).
+- When a reading crosses a threshold, a colored banner appears on the dashboard (rose for high, blue for low) until the value returns to the safe range.
+- Server-side alerting remembers the last state per device, so notifications fire only on crossings (entering high/low from normal).
+- Optional email (Resend API) and/or SMS (Twilio API) delivery is supported for one pre-configured contact.
+
+| Variable | Description |
+|----------|-------------|
+| `ALERT_RESEND_API_KEY` | Resend API key for sending alert emails |
+| `ALERT_EMAIL_FROM` | Verified sender address for Resend (e.g., `alerts@yourdomain.com`) |
+| `ALERT_EMAIL_TO` | Recipient email that receives alerts |
+| `ALERT_TWILIO_ACCOUNT_SID` | Twilio Account SID for SMS delivery |
+| `ALERT_TWILIO_AUTH_TOKEN` | Twilio auth token |
+| `ALERT_SMS_FROM` | Twilio phone number (E.164) that originates alerts |
+| `ALERT_SMS_TO` | Destination phone number (E.164) |
+
+Provide either the email trio or the SMS quartet (or both). If no variables are set, alerts stay on the dashboard only.
 
 ## Bridge Your Existing Arduino Sketch
 
@@ -86,4 +145,5 @@ Stop with `Ctrl+C`; the serial port is closed gracefully.
 - **Different print format?** Adjust `parseSensorLine` inside `scripts/serial-bridge.ts`.
 
 With the bridge running, the website will show your live DHT22 readings instead of simulated data.
+"# Room-Temp-Monit-Sys" 
 "# Room-Temp-Monit-Sys" 
