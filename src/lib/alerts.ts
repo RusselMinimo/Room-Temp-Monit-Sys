@@ -32,11 +32,11 @@ function clearDeviceForAllUsers(deviceId: string) {
   }
 }
 
-export function handleReadingForAlerts(reading: Reading) {
+export async function handleReadingForAlerts(reading: Reading) {
   if (reading.isDemo) return;
 
-  const preference = getDevicePreferences(reading.deviceId);
-  const thresholdsByUser = getAllUserThresholds(reading.deviceId);
+  const preference = await getDevicePreferences(reading.deviceId);
+  const thresholdsByUser = await getAllUserThresholds(reading.deviceId);
 
   if (!thresholdsByUser || Object.keys(thresholdsByUser).length === 0) {
     // Fallback to legacy device-level thresholds if present

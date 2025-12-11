@@ -107,11 +107,21 @@ export async function createSession(email: string): Promise<SessionRecord> {
     expiresAt,
   };
 
+  // #region agent log
+  fetch('http://127.0.0.1:7244/ingest/a101187a-72de-4f32-8b8f-fe2762640cce',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'auth.ts:97',message:'createSession entry',data:{email:normalizedEmail,token,storeSizeBefore:sessionStore.size,storeKeysBefore:Array.from(sessionStore.keys())},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
+  // #endregion
+
   if (!isDatabaseAvailable()) {
     // Fallback to in-memory storage
     console.warn("[auth] Database not available, using in-memory sessions");
     sessionStore.set(token, record);
+    // #region agent log
+    fetch('http://127.0.0.1:7244/ingest/a101187a-72de-4f32-8b8f-fe2762640cce',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'auth.ts:113',message:'createSession in-memory set',data:{token,storeSizeAfter:sessionStore.size,storeKeysAfter:Array.from(sessionStore.keys()),savedRecord:record},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
+    // #endregion
     persistSessionCookie(token);
+    // #region agent log
+    fetch('http://127.0.0.1:7244/ingest/a101187a-72de-4f32-8b8f-fe2762640cce',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'auth.ts:115',message:'createSession cookie persisted',data:{token},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
+    // #endregion
     return record;
   }
 
@@ -143,15 +153,23 @@ export async function getSession(): Promise<SessionRecord | null> {
   const token = cookieStore.get(SESSION_COOKIE_NAME)?.value;
   // #region agent log
   console.log('[DEBUG getSession] Cookie check', { hasToken: !!token, tokenPreview: token ? token.substring(0, 8) + '...' : null });
+  fetch('http://127.0.0.1:7244/ingest/a101187a-72de-4f32-8b8f-fe2762640cce',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'auth.ts:142',message:'getSession entry',data:{hasToken:!!token,token,tokenPreview:token?token.substring(0,8)+'...':null,storeSize:sessionStore.size,storeKeys:Array.from(sessionStore.keys())},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{});
   // #endregion
   if (!token) return null;
 
   if (!isDatabaseAvailable()) {
     // Fallback to in-memory storage
+    // #region agent log
+    fetch('http://127.0.0.1:7244/ingest/a101187a-72de-4f32-8b8f-fe2762640cce',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'auth.ts:151',message:'getSession before prune',data:{token,storeSizeBefore:sessionStore.size,storeKeysBefore:Array.from(sessionStore.keys()),now:Date.now()},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{});
+    // #endregion
     pruneExpiredSessionsFromMemory();
+    // #region agent log
+    fetch('http://127.0.0.1:7244/ingest/a101187a-72de-4f32-8b8f-fe2762640cce',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'auth.ts:152',message:'getSession after prune',data:{token,storeSizeAfter:sessionStore.size,storeKeysAfter:Array.from(sessionStore.keys()),lookupToken:token},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{});
+    // #endregion
     const session = sessionStore.get(token);
     // #region agent log
     console.log('[DEBUG getSession] In-memory check', { hasSession: !!session, expiresAt: session?.expiresAt, now: Date.now(), isExpired: session ? session.expiresAt <= Date.now() : null });
+    fetch('http://127.0.0.1:7244/ingest/a101187a-72de-4f32-8b8f-fe2762640cce',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'auth.ts:153',message:'getSession lookup result',data:{token,hasSession:!!session,sessionEmail:session?.email,sessionExpiresAt:session?.expiresAt,now:Date.now(),isExpired:session?session.expiresAt<=Date.now():null,allStoreEntries:Array.from(sessionStore.entries()).map(([k,v])=>({token:k,email:v.email,expiresAt:v.expiresAt}))},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C'})}).catch(()=>{});
     // #endregion
     if (!session) return null;
     if (session.expiresAt <= Date.now()) {

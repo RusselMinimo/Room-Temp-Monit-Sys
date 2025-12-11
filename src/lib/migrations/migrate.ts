@@ -1,5 +1,4 @@
-import "server-only";
-
+// Standalone script - do not use "server-only" as this is run with tsx, not Next.js
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { sql } from "@/lib/db";
@@ -17,7 +16,7 @@ async function runMigration(name: string, sqlContent: string) {
   console.log(`[migrate] Running migration: ${name}`);
   
   try {
-    await sql(sqlContent);
+    await sql.unsafe(sqlContent);
     console.log(`[migrate] ✓ Completed: ${name}`);
   } catch (error) {
     console.error(`[migrate] ✗ Failed: ${name}`, error);

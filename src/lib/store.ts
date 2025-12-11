@@ -47,7 +47,7 @@ function rowToReading(row: ReadingRow): Reading {
 export async function addReading(reading: Reading) {
   // Publish to event bus first (for real-time updates)
   publishReading(reading);
-  handleReadingForAlerts(reading);
+  await handleReadingForAlerts(reading);
 
   if (!isDatabaseAvailable()) {
     // Fallback to in-memory storage

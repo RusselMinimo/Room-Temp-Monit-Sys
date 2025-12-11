@@ -16,25 +16,25 @@ import { getAssignedDeviceId } from "@/lib/assignments";
 
 export async function GET() {
   const session = await getSession();
-  const labelsAll = listDeviceLabels();
+  const labelsAll = await listDeviceLabels();
   if (!session) {
     return NextResponse.json({ labels: labelsAll, preferences: {} });
   }
   const isAdmin = isAdminEmail(session.email);
-  const preferencesAll = isAdmin ? listDevicePreferences() : listDevicePreferencesForUser(session.email);
-  const labelsForUser = listDeviceLabelsForUser(session.email);
+  const preferencesAll = isAdmin ? await listDevicePreferences() : await listDevicePreferencesForUser(session.email);
+  const labelsForUser = await listDeviceLabelsForUser(session.email);
+
+  const assigned = await getAssignedDeviceId(session.email);
 
   const payload: Record<string, unknown> = {
     labels: (() => {
       if (isAdmin) return labelsAll;
-      const assigned = getAssignedDeviceId(session.email);
       const out: Record<string, string> = {};
       if (assigned && labelsForUser[assigned]) out[assigned] = labelsForUser[assigned];
       return out;
     })(),
     preferences: (() => {
       if (isAdmin) return preferencesAll;
-      const assigned = getAssignedDeviceId(session.email);
       const out: Record<string, (typeof preferencesAll)[string]> = {};
       if (assigned && preferencesAll[assigned]) out[assigned] = preferencesAll[assigned];
       return out;
@@ -43,7 +43,7 @@ export async function GET() {
   };
 
   if (isAdmin) {
-    payload.preferencesByUser = listThresholdsByUser();
+    payload.preferencesByUser = await listThresholdsByUser();
   }
   return NextResponse.json(payload);
 }
@@ -82,11 +82,11 @@ export async function POST(request: NextRequest) {
       setUserThresholds(body.deviceId, session.email, body.thresholds ?? null);
     }
 
-    const labelsAll = listDeviceLabels();
+    const labelsAll = await listDeviceLabels();
     const isAdmin = isAdminEmail(session.email);
-    const preferencesAll = isAdmin ? listDevicePreferences() : listDevicePreferencesForUser(session.email);
-    const assigned = getAssignedDeviceId(session.email);
-    const labelsForUser = listDeviceLabelsForUser(session.email);
+    const preferencesAll = isAdmin ? await listDevicePreferences() : await listDevicePreferencesForUser(session.email);
+    const assigned = await getAssignedDeviceId(session.email);
+    const labelsForUser = await listDeviceLabelsForUser(session.email);
     const payload: Record<string, unknown> = {
       labels: (() => {
         if (isAdminEmail(session.email)) return labelsAll;
@@ -102,7 +102,7 @@ export async function POST(request: NextRequest) {
       })(),
     };
     if (isAdmin) {
-      payload.preferencesByUser = listThresholdsByUser();
+      payload.preferencesByUser = await listThresholdsByUser();
     }
 
     return NextResponse.json(payload);
