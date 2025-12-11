@@ -21,7 +21,7 @@ export async function deleteAuthLogAction(_state: { error?: string }, formData: 
 export async function clearAuthLogsAction() {
   requireAdminSession();
   clearAuthLogs();
-  redirect("/admin");
+  // Don't redirect - let the SSE stream handle the UI update
 }
 
 

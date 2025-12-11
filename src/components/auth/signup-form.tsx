@@ -70,14 +70,14 @@ export function SignupForm() {
             aria-invalid={hasError || undefined}
             aria-describedby={hasError ? "form-error" : "password-requirements"}
             placeholder="Create a strong password"
-            className="pr-11 transition-all focus:scale-[1.01]"
+            className="pr-10 transition-all focus:scale-[1.01]"
           />
           <button
             type="button"
-            className="absolute inset-y-0 right-2 inline-flex items-center rounded-md px-2 text-muted-foreground transition-colors hover:text-foreground focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2"
+            className="absolute inset-y-0 right-0 flex items-center pr-3 text-muted-foreground transition-colors hover:text-foreground"
             onClick={() => setShowPassword((prev) => !prev)}
             aria-label={showPassword ? "Hide password" : "Show password"}
-            tabIndex={0}
+            tabIndex={-1}
           >
             {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
           </button>
@@ -102,14 +102,14 @@ export function SignupForm() {
             aria-invalid={hasError || undefined}
             aria-describedby={hasError ? "form-error" : undefined}
             placeholder="Re-enter password"
-            className="pr-11 transition-all focus:scale-[1.01]"
+            className="pr-10 transition-all focus:scale-[1.01]"
           />
           <button
             type="button"
-            className="absolute inset-y-0 right-2 inline-flex items-center rounded-md px-2 text-muted-foreground transition-colors hover:text-foreground focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2"
+            className="absolute inset-y-0 right-0 flex items-center pr-3 text-muted-foreground transition-colors hover:text-foreground"
             onClick={() => setShowConfirmPassword((prev) => !prev)}
             aria-label={showConfirmPassword ? "Hide confirm password" : "Show confirm password"}
-            tabIndex={0}
+            tabIndex={-1}
           >
             {showConfirmPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
           </button>

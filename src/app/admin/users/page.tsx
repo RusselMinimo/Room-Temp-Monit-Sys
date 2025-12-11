@@ -5,6 +5,7 @@ import { requireAdminSession } from "@/lib/auth";
 import { Navigation } from "@/components/ui/navigation";
 import { DashboardLayout } from "@/components/ui/dashboard-layout";
 import { BackToDashboardButton } from "@/components/admin/back-to-dashboard-button";
+import { UserManagementRealtime } from "@/components/admin/user-management-realtime";
 
 export const metadata: Metadata = {
   title: "User Management · IoT Room Monitoring",
@@ -43,11 +44,7 @@ export default function UserManagementPage() {
         </header>
 
         <section className="space-y-6">
-          <div className="rounded-xl border border-border/70 bg-card/80 p-6 shadow-sm backdrop-blur-sm">
-            <p className="text-sm text-muted-foreground">
-              User management features coming soon. This page will allow you to view, edit, and manage user accounts.
-            </p>
-          </div>
+          <UserManagementRealtime />
 
           {/* Footer */}
           <footer className="mt-8 border-t border-border/40 py-8">

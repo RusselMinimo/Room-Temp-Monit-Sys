@@ -3,6 +3,26 @@
 Next.js 14 dashboard that displays real-time readings from Arduino-based sensors.  
 The UI falls back to demo data until a real reading is ingested through `/api/ingest`.
 
+## Quick Start
+
+```bash
+npm install
+npm run dev
+```
+
+Visit `http://localhost:3000`. As soon as an authentic reading arrives, "Demo Mode" disappears.
+
+## Deployment
+
+This application is ready for production deployment. See [DEPLOYMENT.md](./DEPLOYMENT.md) for detailed deployment instructions.
+
+**Quick Deploy Options:**
+- **Docker**: `docker-compose up -d` (see [DEPLOYMENT.md](./DEPLOYMENT.md))
+- **Vercel**: `vercel` (recommended for Next.js)
+- **Railway/Render**: Connect repository and deploy
+
+**Pre-deployment Checklist**: See [DEPLOYMENT_CHECKLIST.md](./DEPLOYMENT_CHECKLIST.md)
+
 ## Prerequisites
 
 - Node.js >= 18.17

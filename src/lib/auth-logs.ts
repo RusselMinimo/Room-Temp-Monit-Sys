@@ -21,7 +21,12 @@ export interface AuthLogEntry {
 }
 
 // Event bus for real-time auth log updates
-type AuthLogSubscriber = (entry: AuthLogEntry) => void;
+export type AuthLogEvent = 
+  | { type: "new"; entry: AuthLogEntry }
+  | { type: "delete"; id: string }
+  | { type: "clear" };
+
+type AuthLogSubscriber = (event: AuthLogEvent) => void;
 const authLogSubscribers: Set<AuthLogSubscriber> = new Set();
 
 export function subscribeToAuthLogs(subscriber: AuthLogSubscriber): () => void {
@@ -31,9 +36,9 @@ export function subscribeToAuthLogs(subscriber: AuthLogSubscriber): () => void {
   };
 }
 
-function publishAuthLog(entry: AuthLogEntry) {
+function publishAuthLogEvent(event: AuthLogEvent) {
   for (const subscriber of authLogSubscribers) {
-    subscriber(entry);
+    subscriber(event);
   }
 }
 
@@ -79,7 +84,7 @@ export function appendAuthLog(entry: Omit<AuthLogEntry, "id" | "timestamp"> & { 
   persistLogsToDisk();
   
   // Publish to real-time subscribers
-  publishAuthLog(record);
+  publishAuthLogEvent({ type: "new", entry: record });
   
   return record;
 }
@@ -96,6 +101,10 @@ export function deleteAuthLogById(id: string): boolean {
   if (index === -1) return false;
   authLogs.splice(index, 1);
   persistLogsToDisk();
+  
+  // Publish delete event to real-time subscribers
+  publishAuthLogEvent({ type: "delete", id });
+  
   return true;
 }
 
@@ -104,6 +113,10 @@ export function clearAuthLogs(): number {
   const count = authLogs.length;
   authLogs = [];
   persistLogsToDisk();
+  
+  // Publish clear event to real-time subscribers
+  publishAuthLogEvent({ type: "clear" });
+  
   return count;
 }
 

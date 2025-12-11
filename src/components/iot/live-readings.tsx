@@ -38,7 +38,11 @@ interface ApiResponse {
 const MAX_HISTORY_POINTS = 60;
 const OFFLINE_THRESHOLD_MS = 20_000; // mark as offline if no packets for 20s
 
-export function LiveReadings() {
+interface LiveReadingsProps {
+  viewAsUser?: string;
+}
+
+export function LiveReadings({ viewAsUser }: LiveReadingsProps = {}) {
   const searchParams = useSearchParams();
   const [mounted, setMounted] = useState(false);
   const [readings, setReadings] = useState<Reading[]>([]);
@@ -75,8 +79,9 @@ export function LiveReadings() {
 
     async function fetchOnce() {
       try {
-        const params = new URLSearchParams(typeof window !== "undefined" ? window.location.search : "");
-        const asParam = params.get("as");
+        // Use viewAsUser prop if provided, otherwise fall back to URL parameter
+        const asParam = viewAsUser || 
+          (typeof window !== "undefined" ? new URLSearchParams(window.location.search).get("as") : null);
         const url = asParam ? `/api/readings?demo=1&as=${encodeURIComponent(asParam)}` : "/api/readings?demo=1";
         const res = await fetch(url, { cache: "no-store", credentials: "include" });
         if (!res.ok) throw new Error("Request failed");
@@ -142,7 +147,7 @@ export function LiveReadings() {
       if (timer) window.clearInterval(timer);
       if (es) es.close();
     };
-  }, [appendHistory]);
+  }, [appendHistory, viewAsUser]);
 
   const sortedReadings = useMemo(
     () =>
@@ -232,10 +237,16 @@ export function LiveReadings() {
     return latestReal ?? latestDemo ?? selectLatestReading(readings);
   }, [latestReal, latestDemo, readings]);
   
+  // Get the effective "as" parameter from prop or URL
+  const effectiveAsParam = useMemo(() => {
+    if (viewAsUser) return viewAsUser;
+    return searchParams?.get("as") ?? undefined;
+  }, [viewAsUser, searchParams]);
+  
   // Check if there's a user status warning (user is offline/logged out)
   const userStatusWarning = useMemo(() => {
     if (!primaryReading || primaryReading.isDemo === true) return null;
-    const currentAs = normalizeEmail(searchParams?.get("as") ?? undefined);
+    const currentAs = normalizeEmail(effectiveAsParam);
     const assignedUserEmail = assignedUsersByDevice?.[primaryReading.deviceId];
     const userEmailToCheck = currentAs || assignedUserEmail;
     if (!userEmailToCheck) return null;
@@ -251,7 +262,7 @@ export function LiveReadings() {
       };
     }
     return null;
-  }, [primaryReading, searchParams, assignedUsersByDevice, userAuthStatuses]);
+  }, [primaryReading, effectiveAsParam, assignedUsersByDevice, userAuthStatuses]);
 
   // Prevent hydration mismatch by rendering placeholder during SSR
   if (!mounted) {
@@ -300,6 +311,7 @@ export function LiveReadings() {
             userAuthStatuses={userAuthStatuses}
             assignedUsersByDevice={assignedUsersByDevice}
             searchParams={searchParams}
+            viewAsUser={effectiveAsParam}
           />
           <div className="text-center text-xs text-muted-foreground">{connectionLabel}</div>
           {sortedReadings.length > 0 && (
@@ -363,9 +375,10 @@ interface ReadingHeroProps {
   userAuthStatuses?: UserAuthStatus[];
   assignedUsersByDevice?: Record<string, string>;
   searchParams: ReturnType<typeof useSearchParams> | null;
+  viewAsUser?: string;
 }
 
-function ReadingHero({ reading, isDemo, history, preference, nowMs, userAuthStatuses, assignedUsersByDevice, searchParams }: ReadingHeroProps) {
+function ReadingHero({ reading, isDemo, history, preference, nowMs, userAuthStatuses, assignedUsersByDevice, searchParams, viewAsUser }: ReadingHeroProps) {
   const humidityValue = typeof reading.humidityPct === "number" ? reading.humidityPct : undefined;
   const rssiValue = typeof reading.rssi === "number" ? `${reading.rssi} dBm` : undefined;
   const deviceStatus = getDeviceStatus(reading, nowMs);
@@ -373,10 +386,10 @@ function ReadingHero({ reading, isDemo, history, preference, nowMs, userAuthStat
   const thresholdState = getThresholdState(reading.temperatureC, thresholds);
 
   // Determine which user's status to show:
-  // 1. If viewing as a specific user (via ?as= param), use that user's status
+  // 1. If viewing as a specific user (via viewAsUser prop or ?as= param), use that user's status
   // 2. Otherwise, if there's an assigned user for the device, use that user's status
   // 3. Otherwise, use device status
-  const currentAs = normalizeEmail(searchParams?.get("as") ?? undefined);
+  const currentAs = normalizeEmail(viewAsUser || (searchParams?.get("as") ?? undefined));
   const assignedUserEmail = assignedUsersByDevice?.[reading.deviceId];
   
   // Priority: viewing user > assigned user
@@ -666,10 +679,6 @@ function DeviceGrid({
 
   return (
     <section className="mt-6 space-y-3">
-      <div>
-        <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Devices</p>
-        <p className="text-sm text-muted-foreground">Label rooms, tune thresholds, and review health in one place.</p>
-      </div>
       <div className="grid gap-4 lg:grid-cols-2">
         {filteredReadings.map((reading) => {
           const status = getDeviceStatus(reading, nowMs);
@@ -863,17 +872,7 @@ function DeviceGrid({
             </article>
             )}
 
-            {isAdmin && (
-              <AdminUserRooms
-                reading={reading}
-                preference={allPreferences?.[reading.deviceId] ?? preference}
-                preferencesByUser={preferencesByUser}
-                preferredEmail={assignedUsersByDevice?.[reading.deviceId]}
-                userAuthStatuses={userAuthStatuses}
-                alerts={alerts}
-                searchParams={searchParams}
-              />
-            )}
+            {/* Removed AdminUserRooms cards to fix navigation bug */}
             </>
           );
         })}

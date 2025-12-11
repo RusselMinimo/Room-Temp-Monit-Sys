@@ -123,8 +123,10 @@ export default function AdminDashboardPage() {
               </div>
             </div>
             <div className="mt-4">
-              <Button variant="secondary" size="sm">
-                View Activity
+              <Button asChild variant="secondary" size="sm">
+                <Link href="/admin/users">
+                  Manage Users
+                </Link>
               </Button>
             </div>
           </div>
@@ -146,6 +148,12 @@ export default function AdminDashboardPage() {
                 <Link href="/admin">
                   <FileText className="h-5 w-5" />
                   Authentication Logs
+                </Link>
+              </Button>
+              <Button asChild variant="outline" className="w-full justify-start gap-2" size="lg">
+                <Link href="/admin/users">
+                  <Users className="h-5 w-5" />
+                  User Management
                 </Link>
               </Button>
             </div>

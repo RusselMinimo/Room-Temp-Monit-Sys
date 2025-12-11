@@ -26,10 +26,18 @@ export async function GET(_req: NextRequest) {
       // Heartbeat to keep the connection alive (every 15s)
       const heartbeat = setInterval(() => send(`: ping\n\n`), 15000);
 
-      // Subscribe to new auth log events
-      const unsubscribe = subscribeToAuthLogs((logEntry) => {
-        const data = JSON.stringify({ type: "update", log: logEntry });
-        send(`data: ${data}\n\n`);
+      // Subscribe to auth log events
+      const unsubscribe = subscribeToAuthLogs((event) => {
+        if (event.type === "new") {
+          const data = JSON.stringify({ type: "update", log: event.entry });
+          send(`data: ${data}\n\n`);
+        } else if (event.type === "delete") {
+          const data = JSON.stringify({ type: "delete", id: event.id });
+          send(`data: ${data}\n\n`);
+        } else if (event.type === "clear") {
+          const data = JSON.stringify({ type: "clear" });
+          send(`data: ${data}\n\n`);
+        }
       });
 
       // Close handling

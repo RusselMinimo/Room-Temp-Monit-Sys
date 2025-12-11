@@ -44,6 +44,12 @@ export function AuthLogsRealtime({ initialLogs, onDelete }: AuthLogsRealtimeProp
           } else if (data.type === "update" && data.log) {
             // Prepend new log entry (since logs are shown in reverse chronological order)
             setLogs((prev) => [data.log, ...prev]);
+          } else if (data.type === "delete" && data.id) {
+            // Remove the deleted log entry
+            setLogs((prev) => prev.filter((log) => log.id !== data.id));
+          } else if (data.type === "clear") {
+            // Clear all logs
+            setLogs([]);
           }
         } catch (error) {
           console.error("Failed to parse SSE message:", error);

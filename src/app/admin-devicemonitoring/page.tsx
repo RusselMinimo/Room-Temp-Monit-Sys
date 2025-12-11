@@ -1,13 +1,13 @@
 import { Suspense } from "react";
 import type { Metadata } from "next";
-import { LineChart, Activity } from "lucide-react";
+import { LineChart, Users } from "lucide-react";
 
 import { Navigation } from "@/components/ui/navigation";
 import { DashboardLayout } from "@/components/ui/dashboard-layout";
 import { DashboardSkeleton } from "@/components/ui/skeleton";
 import { requireAdminSession } from "@/lib/auth";
-import { LiveReadings } from "@/components/iot/live-readings";
 import { BackToDashboardButton } from "@/components/admin/back-to-dashboard-button";
+import { UserDeviceList } from "@/components/admin/user-device-list";
 
 export const metadata: Metadata = {
   title: "Device Monitoring · IoT Room Monitoring",
@@ -48,14 +48,17 @@ export default function DeviceMonitoringPage() {
         </header>
 
         <section className="space-y-6">
-          {/* Live System Data Section */}
+          {/* User Devices Section */}
           <div className="space-y-4">
             <h2 className="flex items-center gap-2 text-2xl font-bold tracking-tight">
-              <Activity className="h-6 w-6 text-primary" />
-              Live System Data
+              <Users className="h-6 w-6 text-primary" />
+              User Device Monitoring
             </h2>
+            <p className="text-sm text-muted-foreground">
+              View and monitor live readings for each user&apos;s assigned devices
+            </p>
             <Suspense fallback={<DashboardSkeleton />}>
-              <LiveReadings />
+              <UserDeviceList />
             </Suspense>
           </div>
 
