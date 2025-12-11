@@ -68,18 +68,20 @@ docker run -d \
    vercel
    ```
 
-3. **Set up Vercel KV (Required for User Accounts)**:
+3. **Set up Neon Postgres (Required for persistence)**:
    - Go to your Vercel project dashboard
-   - Navigate to **Storage** → **Create Database** → **KV** (Redis)
-   - Create a new KV database (free tier available)
-   - Vercel will automatically add these environment variables:
-     - `KV_REST_API_URL`
-     - `KV_REST_API_TOKEN`
-   - **Important**: User accounts created via signup will only persist if KV is configured!
+   - Navigate to **Storage** → **Create Database** → **Postgres (Neon)**
+   - Create the database and link it to this project
+   - Vercel will automatically add `DATABASE_URL`
+   - After the database is linked, run migrations once (locally against Neon or via a one-off job):
+     ```bash
+     npm run db:migrate
+     ```
 
 4. **Configure Environment Variables** (CRITICAL):
    - Go to your project settings on Vercel → Environment Variables
    - Add **ALL** environment variables from `.env.example`, especially:
+     - `DATABASE_URL` (should be set automatically when Neon is linked)
      - `AUTH_EMAIL` - Your admin email (e.g., `admin@yourdomain.com`)
      - `AUTH_PASSWORD` - Your admin password (use a strong password!)
      - `NEXT_PUBLIC_APP_URL` - Your Vercel domain (e.g., `https://your-app.vercel.app`)
@@ -87,13 +89,9 @@ docker run -d \
    - After adding variables, redeploy your application
 
 5. **How Storage Works on Vercel**:
-   - **With Vercel KV**: User accounts and sessions persist across deployments and cold starts ✅
-   - **Without Vercel KV**: 
-     - File-based storage (`data/` directory) is **read-only** on Vercel
-     - Only the default admin account (from `AUTH_EMAIL`/`AUTH_PASSWORD`) will work
-     - User accounts created via signup **won't persist** between deployments or cold starts
-     - Sessions **won't persist** across function invocations
-   - **Recommendation**: Always set up Vercel KV for production deployments
+   - **With Neon Postgres (DATABASE_URL set)**: Users, sessions, readings, device preferences, and auth logs persist across deployments and cold starts ✅
+   - **Without DATABASE_URL**: The app falls back to in-memory storage; data and sessions are lost on restart ❌
+   - **Recommendation**: Always keep `DATABASE_URL` configured in production
 
 ### Option 2: Railway
 
@@ -166,6 +164,7 @@ docker run -d \
 ### Required for Production
 
 - `NEXT_PUBLIC_APP_URL` - Your production domain (e.g., `https://yourdomain.com`)
+- `DATABASE_URL` - Postgres connection string (Neon recommended)
 - `AUTH_EMAIL` - Admin email address
 - `AUTH_PASSWORD` - Admin password (will be hashed automatically)
 
@@ -184,16 +183,12 @@ See `.env.example` for all available options.
 
 ## Data Persistence
 
-The application stores data in the `data/` directory:
-- `users.json` - User accounts
-- `sessions.json` - Active sessions
-- `device-preferences.json` - Device configurations
-- `auth-logs.json` - Authentication logs
+Primary persistence is Postgres via `DATABASE_URL` (Neon recommended). All users, sessions, readings, device preferences, and auth logs are stored in the database.
 
-**Important**: 
-- This directory is git-ignored and should be backed up regularly
-- For production, consider migrating to a database (PostgreSQL, MongoDB)
-- If using Docker, mount the `data/` directory as a volume
+**If `DATABASE_URL` is missing**:
+- The app falls back to in-memory storage
+- Data and sessions are lost on restart
+- Not suitable for production
 
 ## Health Check
 

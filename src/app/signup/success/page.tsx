@@ -9,10 +9,27 @@ export const metadata: Metadata = {
 	title: "Account created | IoT Room Temperature",
 };
 
-export default function SignupSuccessPage() {
-	const session = getSession();
+export default async function SignupSuccessPage() {
+	// #region agent log
+	console.log("[DEBUG signup-success] page entry");
+	// #endregion
+
+	const session = await getSession();
+	// #region agent log
+	console.log("[DEBUG signup-success] after getSession", {
+		hasSession: !!session,
+		email: session?.email,
+	});
+	// #endregion
+
 	if (session) {
 		const isAdmin = isAdminEmail(session.email);
+		// #region agent log
+		console.log("[DEBUG signup-success] redirecting authenticated user", {
+			isAdmin,
+			redirectTo: isAdmin ? "/admin-dashboard" : "/user-dashboard",
+		});
+		// #endregion
 		redirect(isAdmin ? "/admin-dashboard" : "/user-dashboard");
 	}
 

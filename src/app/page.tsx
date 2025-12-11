@@ -48,13 +48,37 @@ const maxHourlyTemp = Math.max(...hourlyTemps);
 // Force dynamic rendering to check session on every request
 export const dynamic = "force-dynamic";
 
-export default function Home() {
+export default async function Home() {
+  // #region agent log
+  console.log('[DEBUG] Home component entry');
+  // #endregion
   // Redirect authenticated users to their dashboard
-  const session = getSession();
+  // #region agent log
+  console.log('[DEBUG] Before getSession call');
+  // #endregion
+  const session = await getSession();
+  // #region agent log
+  console.log('[DEBUG] After getSession call', { 
+    hasSession: !!session, 
+    email: session?.email, 
+    isPromise: session instanceof Promise,
+    type: typeof session,
+    sessionDetails: session ? { token: session.token?.substring(0, 8) + '...', expiresAt: session.expiresAt } : null
+  });
+  // #endregion
   if (session) {
+    // #region agent log
+    console.log('[DEBUG] Session exists, checking admin status', { email: session.email });
+    // #endregion
     const isAdmin = isAdminEmail(session.email);
+    // #region agent log
+    console.log('[DEBUG] Redirecting authenticated user', { isAdmin, redirectTo: isAdmin ? '/admin-dashboard' : '/user-dashboard' });
+    // #endregion
     redirect(isAdmin ? "/admin-dashboard" : "/user-dashboard");
   }
+  // #region agent log
+  console.log('[DEBUG] No session, rendering landing page');
+  // #endregion
 
   return (
     <>

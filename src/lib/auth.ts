@@ -141,12 +141,18 @@ export async function createSession(email: string): Promise<SessionRecord> {
 export async function getSession(): Promise<SessionRecord | null> {
   const cookieStore = cookies();
   const token = cookieStore.get(SESSION_COOKIE_NAME)?.value;
+  // #region agent log
+  console.log('[DEBUG getSession] Cookie check', { hasToken: !!token, tokenPreview: token ? token.substring(0, 8) + '...' : null });
+  // #endregion
   if (!token) return null;
 
   if (!isDatabaseAvailable()) {
     // Fallback to in-memory storage
     pruneExpiredSessionsFromMemory();
     const session = sessionStore.get(token);
+    // #region agent log
+    console.log('[DEBUG getSession] In-memory check', { hasSession: !!session, expiresAt: session?.expiresAt, now: Date.now(), isExpired: session ? session.expiresAt <= Date.now() : null });
+    // #endregion
     if (!session) return null;
     if (session.expiresAt <= Date.now()) {
       sessionStore.delete(token);

@@ -102,6 +102,9 @@ export function Navigation({
   }, [sidebarOpen]);
 
   const isActive = (href: string) => {
+    // #region agent log
+    fetch('http://127.0.0.1:7244/ingest/a101187a-72de-4f32-8b8f-fe2762640cce',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'navigation.tsx:104',message:'isActive called',data:{pathname,href},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'D'})}).catch(()=>{});
+    // #endregion
     if (!pathname) return false;
     
     // Normalize paths by removing trailing slashes (except for root)
@@ -209,6 +212,11 @@ export function Navigation({
                 <Link
                   key={item.href}
                   href={item.href}
+                  onClick={() => {
+                    // #region agent log
+                    fetch('http://127.0.0.1:7244/ingest/a101187a-72de-4f32-8b8f-fe2762640cce',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'navigation.tsx:210',message:'Home link clicked',data:{href:item.href,pathname},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'D'})}).catch(()=>{});
+                    // #endregion
+                  }}
                   className={cn(
                     "flex items-center gap-2 text-sm font-medium transition-colors hover:text-foreground",
                     isActive(item.href) ? "text-foreground" : "text-muted-foreground"
@@ -387,6 +395,11 @@ export function Navigation({
                 <Link
                   key={item.href}
                   href={item.href}
+                  onClick={() => {
+                    // #region agent log
+                    fetch('http://127.0.0.1:7244/ingest/a101187a-72de-4f32-8b8f-fe2762640cce',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'navigation.tsx:387',message:'Mobile Home link clicked',data:{href:item.href,pathname},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'D'})}).catch(()=>{});
+                    // #endregion
+                  }}
                   className={cn(
                     "flex items-center gap-3 rounded-lg px-4 py-3 text-base font-medium transition-all hover:bg-accent",
                     isActive(item.href) 
