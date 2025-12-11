@@ -1,10 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
 
-import { isAdminEmail, requireSession } from "@/lib/auth";
+import { getSession, isAdminEmail } from "@/lib/auth";
 import { listAssignments, setAssignment } from "@/lib/assignments";
 
 export async function GET() {
-  const session = requireSession();
+  const session = await getSession();
+  
+  if (!session) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+  
   if (!isAdminEmail(session.email)) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
@@ -12,7 +17,12 @@ export async function GET() {
 }
 
 export async function POST(request: NextRequest) {
-  const session = requireSession();
+  const session = await getSession();
+  
+  if (!session) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+  
   if (!isAdminEmail(session.email)) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }

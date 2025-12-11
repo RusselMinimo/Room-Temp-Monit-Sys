@@ -43,7 +43,7 @@ export async function GET(request: NextRequest) {
   const asParam = searchParams.get("as")?.trim().toLowerCase() || undefined;
 
   // Determine session/admin first so we can decide on demo behavior
-  const session = getSession();
+  const session = await getSession();
   const isAdmin = session ? isAdminEmail(session.email) : false;
   const impersonatedEmail = isAdmin && asParam ? asParam : undefined;
 
@@ -98,8 +98,8 @@ export async function GET(request: NextRequest) {
   const allPreferences = isAdmin ? listDevicePreferences() : undefined;
   // Always provide all thresholds to admins, regardless of active sessions
   const allThresholds = isAdmin ? listThresholdsByUser() : undefined;
-  const hasNonAdminUsers = isAdmin ? hasAnyNonAdminUser() : false;
-  const registeredEmails = isAdmin ? listNonAdminUserEmails() : undefined;
+  const hasNonAdminUsers = isAdmin ? await hasAnyNonAdminUser() : false;
+  const registeredEmails = isAdmin ? await listNonAdminUserEmails() : undefined;
   const filteredThresholds = (() => {
     if (!isAdmin || !allThresholds) return undefined;
     const allowed = new Set((registeredEmails ?? []).map((e) => e.trim().toLowerCase()));

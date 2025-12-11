@@ -15,7 +15,7 @@ import type { TemperatureThresholds } from "@/types/devices";
 import { getAssignedDeviceId } from "@/lib/assignments";
 
 export async function GET() {
-  const session = getSession();
+  const session = await getSession();
   const labelsAll = listDeviceLabels();
   if (!session) {
     return NextResponse.json({ labels: labelsAll, preferences: {} });
@@ -49,7 +49,7 @@ export async function GET() {
 }
 
 export async function POST(request: NextRequest) {
-  const session = getSession();
+  const session = await getSession();
   if (!session) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }

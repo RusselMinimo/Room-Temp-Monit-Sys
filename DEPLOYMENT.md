@@ -68,15 +68,32 @@ docker run -d \
    vercel
    ```
 
-3. **Configure Environment Variables**:
-   - Go to your project settings on Vercel
-   - Add all environment variables from `.env.example`
-   - Set `NEXT_PUBLIC_APP_URL` to your Vercel domain
+3. **Set up Vercel KV (Required for User Accounts)**:
+   - Go to your Vercel project dashboard
+   - Navigate to **Storage** → **Create Database** → **KV** (Redis)
+   - Create a new KV database (free tier available)
+   - Vercel will automatically add these environment variables:
+     - `KV_REST_API_URL`
+     - `KV_REST_API_TOKEN`
+   - **Important**: User accounts created via signup will only persist if KV is configured!
 
-4. **Note**: Vercel uses serverless functions, so:
-   - File-based storage (`data/` directory) won't persist between deployments
-   - Consider using a database (PostgreSQL, MongoDB) for production
-   - Or use Vercel's KV storage for sessions and user data
+4. **Configure Environment Variables** (CRITICAL):
+   - Go to your project settings on Vercel → Environment Variables
+   - Add **ALL** environment variables from `.env.example`, especially:
+     - `AUTH_EMAIL` - Your admin email (e.g., `admin@yourdomain.com`)
+     - `AUTH_PASSWORD` - Your admin password (use a strong password!)
+     - `NEXT_PUBLIC_APP_URL` - Your Vercel domain (e.g., `https://your-app.vercel.app`)
+   - **Important**: Without these variables, you won't be able to log in!
+   - After adding variables, redeploy your application
+
+5. **How Storage Works on Vercel**:
+   - **With Vercel KV**: User accounts and sessions persist across deployments and cold starts ✅
+   - **Without Vercel KV**: 
+     - File-based storage (`data/` directory) is **read-only** on Vercel
+     - Only the default admin account (from `AUTH_EMAIL`/`AUTH_PASSWORD`) will work
+     - User accounts created via signup **won't persist** between deployments or cold starts
+     - Sessions **won't persist** across function invocations
+   - **Recommendation**: Always set up Vercel KV for production deployments
 
 ### Option 2: Railway
 
@@ -229,6 +246,16 @@ Use this for:
 - Ensure the app is running and accessible
 - Check that port 3000 is exposed correctly
 - Verify no firewall is blocking the port
+
+### Can't login on Vercel
+- **Verify environment variables are set**: Go to Vercel Dashboard → Your Project → Settings → Environment Variables
+- **Required variables**:
+  - `AUTH_EMAIL` must be set (e.g., `admin@yourdomain.com`)
+  - `AUTH_PASSWORD` must be set (your admin password)
+  - `NEXT_PUBLIC_APP_URL` should be your Vercel domain (e.g., `https://your-app.vercel.app`)
+- **After adding/updating variables**: Redeploy your application (Vercel → Deployments → Redeploy)
+- **Check variable names**: Ensure they match exactly (case-sensitive)
+- **Note**: Only the default admin account (from env vars) will work. User accounts created via signup won't persist on Vercel due to read-only filesystem
 
 ## Production Recommendations
 

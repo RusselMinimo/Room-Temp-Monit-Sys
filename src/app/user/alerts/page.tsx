@@ -12,8 +12,8 @@ export const metadata: Metadata = {
 
 export const dynamic = "force-dynamic";
 
-export default function AlertsPage() {
-  const session = requireSession();
+export default async function AlertsPage() {
+  const session = await requireSession();
 
   return (
     <>

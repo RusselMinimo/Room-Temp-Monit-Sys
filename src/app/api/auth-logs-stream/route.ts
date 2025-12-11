@@ -5,7 +5,7 @@ import { getSession, isAdminEmail } from "@/lib/auth";
 export const dynamic = "force-dynamic";
 
 export async function GET(_req: NextRequest) {
-  const session = getSession();
+  const session = await getSession();
   
   // Only admins can access auth logs
   if (!session || !isAdminEmail(session.email)) {

@@ -3,10 +3,9 @@ import "server-only";
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
 
 import { isAdminUser, verifyPassword } from "@/lib/users";
+import { storage } from "@/lib/storage";
 
 interface SessionRecord {
   token: string;
@@ -17,41 +16,27 @@ interface SessionRecord {
 
 const SESSION_COOKIE_NAME = "iot_session";
 const SESSION_TTL_SECONDS = Number(process.env.AUTH_SESSION_TTL_SECONDS ?? 60 * 60 * 8); // 8 hours
-const DATA_DIR = join(process.cwd(), "data");
-const SESSIONS_FILE = join(DATA_DIR, "sessions.json");
+const SESSIONS_STORAGE_KEY = "sessions";
 const sessionStore = new Map<string, SessionRecord>();
 
-function loadSessionsFromDisk() {
+async function loadSessionsFromStorage() {
   // Clear existing sessions to ensure deleted sessions are removed
   sessionStore.clear();
-  if (!existsSync(SESSIONS_FILE)) return;
-  try {
-    const raw = readFileSync(SESSIONS_FILE, "utf8");
-    if (!raw.trim()) return;
-    const parsed = JSON.parse(raw) as SessionRecord[];
-    if (Array.isArray(parsed)) {
-      for (const record of parsed) {
-        if (record?.token && record?.email) {
-          sessionStore.set(record.token, record);
-        }
-      }
+  const sessions = await storage.read<SessionRecord[]>(SESSIONS_STORAGE_KEY);
+  if (!sessions || !Array.isArray(sessions)) return;
+  for (const record of sessions) {
+    if (record?.token && record?.email) {
+      sessionStore.set(record.token, record);
     }
-  } catch {
-    // ignore malformed file
   }
 }
 
-function persistSessionsToDisk() {
-  try {
-    if (!existsSync(DATA_DIR)) mkdirSync(DATA_DIR, { recursive: true });
-    const serialized = JSON.stringify(Array.from(sessionStore.values()), null, 2);
-    writeFileSync(SESSIONS_FILE, serialized, "utf8");
-  } catch {
-    // ignore fs errors
-  }
+async function persistSessionsToStorage() {
+  const sessions = Array.from(sessionStore.values());
+  await storage.write(SESSIONS_STORAGE_KEY, sessions);
 }
 
-function pruneExpiredSessions() {
+async function pruneExpiredSessions() {
   let dirty = false;
   const now = Date.now();
   for (const [token, session] of sessionStore.entries()) {
@@ -60,17 +45,24 @@ function pruneExpiredSessions() {
       dirty = true;
     }
   }
-  if (dirty) persistSessionsToDisk();
+  if (dirty) await persistSessionsToStorage();
 }
 
-loadSessionsFromDisk();
-pruneExpiredSessions();
+// Initialize sessions in the background
+loadSessionsFromStorage()
+  .then(() => pruneExpiredSessions())
+  .catch(() => {
+    // If loading fails, continue with empty session store
+  });
 
 export async function verifyUserCredentials(email: string, password: string): Promise<boolean> {
+  if (!email || !password || typeof email !== "string" || typeof password !== "string") {
+    return false;
+  }
   const normalizedEmail = email.trim().toLowerCase();
   const normalizedPassword = password.trim();
   if (!normalizedEmail || !normalizedPassword) return false;
-  return verifyPassword(normalizedEmail, normalizedPassword);
+  return await verifyPassword(normalizedEmail, normalizedPassword);
 }
 
 function persistSessionCookie(token: string) {
@@ -87,8 +79,8 @@ function persistSessionCookie(token: string) {
 }
 
 export async function createSession(email: string): Promise<SessionRecord> {
-  // Reload from disk to stay in sync across workers
-  loadSessionsFromDisk();
+  // Reload from storage to stay in sync across workers
+  await loadSessionsFromStorage();
   const token = randomUUID();
   const issuedAt = Date.now();
   const expiresAt = issuedAt + SESSION_TTL_SECONDS * 1000;
@@ -97,14 +89,31 @@ export async function createSession(email: string): Promise<SessionRecord> {
   const record: SessionRecord = { token, email: normalizedEmail, issuedAt, expiresAt };
   sessionStore.set(token, record);
   persistSessionCookie(token);
-  persistSessionsToDisk();
+  await persistSessionsToStorage();
   return record;
 }
 
-export function getSession(): SessionRecord | null {
-  // Reload from disk to stay in sync across workers
-  loadSessionsFromDisk();
-  pruneExpiredSessions();
+export async function getSession(): Promise<SessionRecord | null> {
+  // Reload from storage to stay in sync across workers
+  await loadSessionsFromStorage();
+  await pruneExpiredSessions();
+  const cookieStore = cookies();
+  const token = cookieStore.get(SESSION_COOKIE_NAME)?.value;
+  if (!token) return null;
+  const session = sessionStore.get(token);
+  if (!session) {
+    return null;
+  }
+  if (session.expiresAt <= Date.now()) {
+    sessionStore.delete(token);
+    await persistSessionsToStorage();
+    return null;
+  }
+  return session;
+}
+
+// Synchronous version for backwards compatibility (uses cached data)
+export function getSessionSync(): SessionRecord | null {
   const cookieStore = cookies();
   const token = cookieStore.get(SESSION_COOKIE_NAME)?.value;
   if (!token) return null;
@@ -119,8 +128,15 @@ export function getSession(): SessionRecord | null {
   return session;
 }
 
-export function requireSession(): SessionRecord {
-  const session = getSession();
+export async function requireSession(): Promise<SessionRecord> {
+  const session = await getSession();
+  if (!session) redirect("/login");
+  return session;
+}
+
+// Synchronous version for backwards compatibility
+export function requireSessionSync(): SessionRecord {
+  const session = getSessionSync();
   if (!session) redirect("/login");
   return session;
 }
@@ -129,16 +145,23 @@ export function isAdminEmail(email: string): boolean {
   return isAdminUser(email);
 }
 
-export function requireAdminSession(): SessionRecord {
-  const session = requireSession();
+export async function requireAdminSession(): Promise<SessionRecord> {
+  const session = await requireSession();
   if (!isAdminEmail(session.email)) redirect("/user-dashboard");
   return session;
 }
 
-export function hasActiveNonAdminSession(): boolean {
-  // Reload from disk and prune to ensure we only consider active sessions
-  loadSessionsFromDisk();
-  pruneExpiredSessions();
+// Synchronous version for backwards compatibility
+export function requireAdminSessionSync(): SessionRecord {
+  const session = requireSessionSync();
+  if (!isAdminEmail(session.email)) redirect("/user-dashboard");
+  return session;
+}
+
+export async function hasActiveNonAdminSession(): Promise<boolean> {
+  // Reload from storage and prune to ensure we only consider active sessions
+  await loadSessionsFromStorage();
+  await pruneExpiredSessions();
   for (const session of sessionStore.values()) {
     if (!isAdminEmail(session.email)) {
       return true;
@@ -147,10 +170,10 @@ export function hasActiveNonAdminSession(): boolean {
   return false;
 }
 
-export function listActiveUserEmails(): string[] {
-  // Reload from disk and prune to ensure we only consider active sessions
-  loadSessionsFromDisk();
-  pruneExpiredSessions();
+export async function listActiveUserEmails(): Promise<string[]> {
+  // Reload from storage and prune to ensure we only consider active sessions
+  await loadSessionsFromStorage();
+  await pruneExpiredSessions();
   const activeEmails = new Set<string>();
   const now = Date.now();
   for (const session of sessionStore.values()) {
@@ -165,22 +188,23 @@ export function listActiveUserEmails(): string[] {
   return Array.from(activeEmails);
 }
 
-export function getActiveSessionCount(): number {
-  // Reload from disk and prune to ensure we only consider active sessions
-  loadSessionsFromDisk();
-  pruneExpiredSessions();
+export async function getActiveSessionCount(): Promise<number> {
+  // Reload from storage and prune to ensure we only consider active sessions
+  await loadSessionsFromStorage();
+  await pruneExpiredSessions();
   // Use listActiveUserEmails to get unique user count (not total sessions)
-  return listActiveUserEmails().length;
+  const emails = await listActiveUserEmails();
+  return emails.length;
 }
 
-export function destroySession() {
-  // Reload from disk to stay in sync across workers
-  loadSessionsFromDisk();
+export async function destroySession() {
+  // Reload from storage to stay in sync across workers
+  await loadSessionsFromStorage();
   const cookieStore = cookies();
   const token = cookieStore.get(SESSION_COOKIE_NAME)?.value;
   if (token) {
     sessionStore.delete(token);
-    persistSessionsToDisk();
+    await persistSessionsToStorage();
   }
   // Delete the cookie by setting it to expired
   cookieStore.delete(SESSION_COOKIE_NAME);

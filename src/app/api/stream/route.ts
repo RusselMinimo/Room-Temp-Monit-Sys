@@ -6,7 +6,7 @@ import { getAssignedDeviceId } from "@/lib/assignments";
 export const dynamic = "force-dynamic";
 
 export async function GET(_req: NextRequest) {
-  const session = getSession();
+  const session = await getSession();
   const isAdmin = session ? isAdminEmail(session.email) : false;
   const assigned = session && !isAdmin ? getAssignedDeviceId(session.email) : undefined;
   const stream = new ReadableStream<Uint8Array>({

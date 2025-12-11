@@ -89,7 +89,7 @@ export async function signupAction(_state: AuthState, formData: FormData): Promi
   const { email, password } = parsed.data;
 
   try {
-    createUser(email, password);
+    await createUser(email, password);
     appendAuthLog({ email, event: "signup", ...clientInfo });
   } catch (error) {
     return buildErrorState(error);
@@ -99,10 +99,10 @@ export async function signupAction(_state: AuthState, formData: FormData): Promi
 }
 
 export async function logoutAction() {
-  const session = getSession();
+  const session = await getSession();
   
   // Destroy session first for instant logout
-  destroySession();
+  await destroySession();
   
   // Log asynchronously without blocking (fire and forget)
   if (session) {
@@ -118,10 +118,10 @@ export async function logoutAction() {
 
 // Client-safe logout that doesn't redirect (for use with client-side routing)
 export async function logoutWithoutRedirect() {
-  const session = getSession();
+  const session = await getSession();
   
   // Destroy session first for instant logout
-  destroySession();
+  await destroySession();
   
   // Log asynchronously without blocking (fire and forget)
   if (session) {

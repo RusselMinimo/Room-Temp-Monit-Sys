@@ -14,8 +14,8 @@ export const metadata: Metadata = {
 
 export const dynamic = "force-dynamic";
 
-export default function UserManagementPage() {
-  const session = requireAdminSession();
+export default async function UserManagementPage() {
+  const session = await requireAdminSession();
 
   return (
     <>

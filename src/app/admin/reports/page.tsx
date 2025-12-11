@@ -13,8 +13,8 @@ export const metadata: Metadata = {
 
 export const dynamic = "force-dynamic";
 
-export default function ExportReportsPage() {
-  const session = requireAdminSession();
+export default async function ExportReportsPage() {
+  const session = await requireAdminSession();
 
   return (
     <>

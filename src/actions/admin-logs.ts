@@ -6,7 +6,7 @@ import { requireAdminSession } from "@/lib/auth";
 import { clearAuthLogs, deleteAuthLogById } from "@/lib/auth-logs";
 
 export async function deleteAuthLogAction(_state: { error?: string }, formData: FormData) {
-  requireAdminSession();
+  await requireAdminSession();
   const id = String(formData.get("id") ?? "");
   if (!id) {
     return { error: "Missing log id" };
@@ -19,7 +19,7 @@ export async function deleteAuthLogAction(_state: { error?: string }, formData: 
 }
 
 export async function clearAuthLogsAction() {
-  requireAdminSession();
+  await requireAdminSession();
   clearAuthLogs();
   // Don't redirect - let the SSE stream handle the UI update
 }

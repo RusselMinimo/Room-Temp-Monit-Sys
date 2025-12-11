@@ -16,8 +16,8 @@ export const metadata: Metadata = {
 
 export const dynamic = "force-dynamic";
 
-export default function DeviceMonitoringPage() {
-  const session = requireAdminSession();
+export default async function DeviceMonitoringPage() {
+  const session = await requireAdminSession();
 
   return (
     <>

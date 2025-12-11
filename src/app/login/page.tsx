@@ -10,8 +10,8 @@ export const metadata: Metadata = {
   description: "Authenticate to access the live IoT dashboard.",
 };
 
-export default function LoginPage() {
-  const session = getSession();
+export default async function LoginPage() {
+  const session = await getSession();
   if (session) {
     const isAdmin = isAdminEmail(session.email);
     redirect(isAdmin ? "/admin-dashboard" : "/user-dashboard");

@@ -41,13 +41,15 @@ function persistToDisk() {
 loadFromDisk();
 
 export function getAssignedDeviceId(email: string): string | undefined {
+  if (!email || typeof email !== "string") return undefined;
   return emailToDeviceId.get(email.trim().toLowerCase());
 }
 
 export function setAssignment(email: string, deviceId?: string | null) {
+  if (!email || typeof email !== "string") return;
   const normalizedEmail = email.trim().toLowerCase();
   if (!normalizedEmail) return;
-  if (!deviceId || !deviceId.trim()) {
+  if (!deviceId || typeof deviceId !== "string" || !deviceId.trim()) {
     if (emailToDeviceId.delete(normalizedEmail)) {
       persistToDisk();
     }

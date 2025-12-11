@@ -30,8 +30,8 @@ export interface UserManagementInfo {
   monitoredDevices: UserDeviceInfo[];
 }
 
-export function getUserManagementData(): UserManagementInfo[] {
-  const userEmails = listNonAdminUserEmails();
+export async function getUserManagementData(): Promise<UserManagementInfo[]> {
+  const userEmails = await listNonAdminUserEmails();
   const authStatuses = getUserAuthStatuses();
   const devicePreferences = listDevicePreferences();
   
@@ -44,7 +44,7 @@ export function getUserManagementData(): UserManagementInfo[] {
   
   for (const email of userEmails) {
     const normalizedEmail = email.toLowerCase();
-    const userRecord = findUser(email);
+    const userRecord = await findUser(email);
     const authStatus = statusMap.get(normalizedEmail);
     const assignedDeviceId = getAssignedDeviceId(email);
     

@@ -10,8 +10,8 @@ export const metadata: Metadata = {
   description: "Create an account to access the IoT room monitoring dashboard.",
 };
 
-export default function SignupPage() {
-  const session = getSession();
+export default async function SignupPage() {
+  const session = await getSession();
   if (session) {
     const isAdmin = isAdminEmail(session.email);
     redirect(isAdmin ? "/admin-dashboard" : "/user-dashboard");

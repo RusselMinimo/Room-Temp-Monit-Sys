@@ -18,9 +18,9 @@ export const metadata: Metadata = {
 
 export const dynamic = "force-dynamic";
 
-export default function AdminDashboardPage() {
-  const session = requireAdminSession();
-  const totalUsers = getTotalUserCount();
+export default async function AdminDashboardPage() {
+  const session = await requireAdminSession();
+  const totalUsers = await getTotalUserCount();
   const activeDevices = getActiveDeviceCount(300000); // Active if sent data in last 5 minutes
   const totalDevices = getTotalDeviceCount();
   const offlineDevices = totalDevices - activeDevices;
@@ -35,7 +35,7 @@ export default function AdminDashboardPage() {
   const activeAlertsCount = userAlerts.length;
   
   // Get active user sessions (logged-in users)
-  const activeUserSessions = getActiveSessionCount();
+  const activeUserSessions = await getActiveSessionCount();
 
   return (
     <>
