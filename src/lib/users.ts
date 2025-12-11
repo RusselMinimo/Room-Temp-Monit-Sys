@@ -1,8 +1,7 @@
 import "server-only";
 
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
-
-import { storage } from "@/lib/storage";
+import { query, isDatabaseAvailable } from "@/lib/db";
 
 export interface UserRecord {
   email: string;
@@ -12,11 +11,20 @@ export interface UserRecord {
   role?: "admin" | "user";
 }
 
-const STORAGE_KEY = "users";
-const userStore = new Map<string, UserRecord>();
+interface UserRow {
+  email: string;
+  password_hash: string;
+  salt: string | null;
+  created_at: string;
+  role: string;
+}
+
 const DEFAULT_EMAIL = (process.env.AUTH_EMAIL?.trim() || "admin@iot.local").toLowerCase();
 const DEFAULT_PASSWORD = process.env.AUTH_PASSWORD || "iot-room-pass";
 const DEFAULT_PASSWORD_HASH = process.env.AUTH_PASSWORD_HASH?.trim();
+
+// In-memory cache for when database is not available
+const userStore = new Map<string, UserRecord>();
 
 function normalizeEmail(email: string): string {
   if (!email || typeof email !== "string") {
@@ -31,142 +39,227 @@ function hashPassword(password: string, salt?: string) {
   return { salt: nextSalt, hash };
 }
 
-async function loadUsersFromStorage() {
-  const users = await storage.read<UserRecord[]>(STORAGE_KEY);
-  if (!users || !Array.isArray(users)) return;
-  for (const record of users) {
-    if (record?.email && record?.passwordHash) {
-      userStore.set(record.email, record);
+function rowToUser(row: UserRow): UserRecord {
+  return {
+    email: row.email,
+    passwordHash: row.password_hash,
+    salt: row.salt ?? undefined,
+    createdAt: parseInt(row.created_at, 10),
+    role: (row.role as "admin" | "user") ?? "user",
+  };
+}
+
+/**
+ * Ensure default admin user exists in database
+ */
+async function ensureDefaultUserInDB(): Promise<boolean> {
+  if (!isDatabaseAvailable()) return false;
+
+  try {
+    // Check if default user exists
+    const existing = await query<UserRow>(
+      "SELECT * FROM users WHERE email = $1",
+      [DEFAULT_EMAIL]
+    );
+
+    if (existing.length === 0) {
+      // Create default user
+      const { salt, hash } = DEFAULT_PASSWORD_HASH
+        ? { salt: "", hash: DEFAULT_PASSWORD_HASH }
+        : hashPassword(DEFAULT_PASSWORD);
+
+      await query(
+        `INSERT INTO users (email, password_hash, salt, created_at, role)
+         VALUES ($1, $2, $3, $4, $5)`,
+        [DEFAULT_EMAIL, hash, salt, Date.now().toString(), "admin"]
+      );
+      return true;
     }
+
+    // Update existing user to ensure it's admin
+    const user = existing[0];
+    let needsUpdate = false;
+    let newHash = user.password_hash;
+    let newSalt = user.salt;
+
+    if (user.role !== "admin") {
+      needsUpdate = true;
+    }
+
+    if (DEFAULT_PASSWORD_HASH) {
+      if (user.password_hash !== DEFAULT_PASSWORD_HASH || user.salt) {
+        newHash = DEFAULT_PASSWORD_HASH;
+        newSalt = "";
+        needsUpdate = true;
+      }
+    } else if (DEFAULT_PASSWORD && user.salt) {
+      // Verify password
+      const { hash } = hashPassword(DEFAULT_PASSWORD, user.salt);
+      const expected = Buffer.from(user.password_hash, "hex");
+      const given = Buffer.from(hash, "hex");
+      const passwordMatches =
+        expected.length === given.length && timingSafeEqual(expected, given);
+
+      if (!passwordMatches) {
+        const { salt, hash: newHashValue } = hashPassword(DEFAULT_PASSWORD);
+        newHash = newHashValue;
+        newSalt = salt;
+        needsUpdate = true;
+      }
+    }
+
+    if (needsUpdate) {
+      await query(
+        `UPDATE users 
+         SET password_hash = $1, salt = $2, role = $3 
+         WHERE email = $4`,
+        [newHash, newSalt, "admin", DEFAULT_EMAIL]
+      );
+    }
+
+    return needsUpdate;
+  } catch (error) {
+    console.error("[users] Failed to ensure default user:", error);
+    return false;
   }
 }
 
-async function persistUsersToStorage() {
-  const users = Array.from(userStore.values());
-  await storage.write(STORAGE_KEY, users);
-}
+/**
+ * Initialize users (ensure default user exists)
+ */
+async function initializeUsers() {
+  if (isDatabaseAvailable()) {
+    await ensureDefaultUserInDB();
+  } else {
+    // Fallback to in-memory storage
+    console.warn("[users] Database not available, using in-memory storage");
+    if (!userStore.has(DEFAULT_EMAIL)) {
+      const { salt, hash } = DEFAULT_PASSWORD_HASH
+        ? { salt: "", hash: DEFAULT_PASSWORD_HASH }
+        : hashPassword(DEFAULT_PASSWORD);
 
-function ensureDefaultUser(): boolean {
-  const existing = userStore.get(DEFAULT_EMAIL);
-
-  if (!existing) {
-    if (DEFAULT_PASSWORD_HASH) {
       userStore.set(DEFAULT_EMAIL, {
         email: DEFAULT_EMAIL,
-        passwordHash: DEFAULT_PASSWORD_HASH,
-        salt: "",
+        passwordHash: hash,
+        salt,
         createdAt: Date.now(),
         role: "admin",
       });
-      return true;
-    }
-    const { salt, hash } = hashPassword(DEFAULT_PASSWORD);
-    userStore.set(DEFAULT_EMAIL, {
-      email: DEFAULT_EMAIL,
-      passwordHash: hash,
-      salt,
-      createdAt: Date.now(),
-      role: "admin",
-    });
-    return true;
-  }
-
-  let shouldPersist = false;
-  const nextRecord: UserRecord = {
-    ...existing,
-    email: DEFAULT_EMAIL,
-    role: "admin",
-    createdAt: existing.createdAt ?? Date.now(),
-  };
-
-  if (existing.role !== "admin") {
-    shouldPersist = true;
-  }
-
-  if (DEFAULT_PASSWORD_HASH) {
-    const needsHashUpdate = existing.passwordHash !== DEFAULT_PASSWORD_HASH || Boolean(existing.salt);
-    if (needsHashUpdate) {
-      nextRecord.passwordHash = DEFAULT_PASSWORD_HASH;
-      nextRecord.salt = "";
-      shouldPersist = true;
-    }
-  } else if (DEFAULT_PASSWORD) {
-    // Verify password synchronously by checking hash directly
-    const { hash } = hashPassword(DEFAULT_PASSWORD, existing.salt);
-    const expected = Buffer.from(existing.passwordHash, "hex");
-    const given = Buffer.from(hash, "hex");
-    const passwordMatches = expected.length === given.length && 
-      timingSafeEqual(expected, given);
-    
-    if (!passwordMatches) {
-      const { salt, hash: newHash } = hashPassword(DEFAULT_PASSWORD);
-      nextRecord.passwordHash = newHash;
-      nextRecord.salt = salt;
-      shouldPersist = true;
     }
   }
-
-  if (shouldPersist) userStore.set(DEFAULT_EMAIL, nextRecord);
-  return shouldPersist;
 }
 
-// Initialize users: load from storage (if available) and ensure default user exists
-// This runs asynchronously in the background
-loadUsersFromStorage()
-  .then(() => {
-    ensureDefaultUser();
-    persistUsersToStorage();
-  })
-  .catch(() => {
-    // If loading fails, ensure default user still exists in memory
-    ensureDefaultUser();
-  });
+// Initialize on module load
+initializeUsers().catch(() => {
+  // Silently fail and retry on next access
+});
 
+/**
+ * Find user by email
+ */
 export async function findUser(email: string): Promise<UserRecord | undefined> {
-  // Ensure we have latest data from storage (handles serverless cold starts)
-  await loadUsersFromStorage();
-  // Ensure default user exists before looking up
-  ensureDefaultUser();
-  if (!email) return undefined;
-  return userStore.get(normalizeEmail(email));
+  if (!isDatabaseAvailable()) {
+    // Fallback to in-memory storage
+    await initializeUsers();
+    return userStore.get(normalizeEmail(email));
+  }
+
+  try {
+    await ensureDefaultUserInDB();
+    
+    const result = await query<UserRow>(
+      "SELECT * FROM users WHERE email = $1",
+      [normalizeEmail(email)]
+    );
+
+    if (result.length === 0) return undefined;
+    return rowToUser(result[0]);
+  } catch (error) {
+    console.error("[users] Failed to find user:", error);
+    return undefined;
+  }
 }
 
-// Synchronous version for backwards compatibility (uses cached data)
+/**
+ * Synchronous version for backwards compatibility (uses cached data)
+ * Note: This should be avoided in new code, use findUser instead
+ */
 export function findUserSync(email: string): UserRecord | undefined {
-  ensureDefaultUser();
   if (!email) return undefined;
+  // Return from in-memory cache only
   return userStore.get(normalizeEmail(email));
 }
 
+/**
+ * Create a new user
+ */
 export async function createUser(email: string, password: string): Promise<UserRecord> {
-  // Load latest users from storage first
-  await loadUsersFromStorage();
   const normalizedEmail = normalizeEmail(email);
   if (!normalizedEmail || !password.trim()) {
     throw new Error("Email and password are required");
   }
-  if (userStore.has(normalizedEmail)) {
-    throw new Error("Email already registered");
+
+  if (!isDatabaseAvailable()) {
+    // Fallback to in-memory storage
+    if (userStore.has(normalizedEmail)) {
+      throw new Error("Email already registered");
+    }
+
+    const { salt, hash } = hashPassword(password);
+    const record: UserRecord = {
+      email: normalizedEmail,
+      passwordHash: hash,
+      salt,
+      createdAt: Date.now(),
+      role: "user",
+    };
+    userStore.set(normalizedEmail, record);
+    return record;
   }
-  const { salt, hash } = hashPassword(password);
-  const record: UserRecord = {
-    email: normalizedEmail,
-    passwordHash: hash,
-    salt,
-    createdAt: Date.now(),
-    role: "user",
-  };
-  userStore.set(normalizedEmail, record);
-  await persistUsersToStorage();
-  return record;
+
+  try {
+    // Check if user already exists
+    const existing = await query<UserRow>(
+      "SELECT * FROM users WHERE email = $1",
+      [normalizedEmail]
+    );
+
+    if (existing.length > 0) {
+      throw new Error("Email already registered");
+    }
+
+    const { salt, hash } = hashPassword(password);
+    const createdAt = Date.now();
+
+    await query(
+      `INSERT INTO users (email, password_hash, salt, created_at, role)
+       VALUES ($1, $2, $3, $4, $5)`,
+      [normalizedEmail, hash, salt, createdAt.toString(), "user"]
+    );
+
+    return {
+      email: normalizedEmail,
+      passwordHash: hash,
+      salt,
+      createdAt,
+      role: "user",
+    };
+  } catch (error) {
+    if (error instanceof Error && error.message === "Email already registered") {
+      throw error;
+    }
+    console.error("[users] Failed to create user:", error);
+    throw new Error("Failed to create user");
+  }
 }
 
+/**
+ * Verify user password
+ */
 export async function verifyPassword(email: string, password: string): Promise<boolean> {
-  // Load latest users from storage and ensure default user exists
-  await loadUsersFromStorage();
-  ensureDefaultUser();
   if (!email) return false;
-  const user = userStore.get(normalizeEmail(email));
+
+  const user = await findUser(email);
   if (!user) return false;
 
   if (!user.salt) {
@@ -184,46 +277,96 @@ export async function verifyPassword(email: string, password: string): Promise<b
   return timingSafeEqual(given, expected);
 }
 
+/**
+ * Check if user is admin
+ */
 export function isAdminUser(email: string): boolean {
   if (!email) return false;
   const normalized = normalizeEmail(email);
-  // Use sync version for backwards compatibility
-  const record = findUserSync(normalized);
-  if (record?.role === "admin") return true;
+  
+  // Check in-memory cache first (synchronous)
+  const cached = userStore.get(normalized);
+  if (cached?.role === "admin") return true;
+  
+  // Check if it's the default admin email
   return normalized === DEFAULT_EMAIL;
 }
 
+/**
+ * Check if any non-admin users exist
+ */
 export async function hasAnyNonAdminUser(): Promise<boolean> {
-  // Reload users to stay in sync across workers/processes
-  await loadUsersFromStorage();
-  for (const record of userStore.values()) {
-    if (record.role !== "admin") return true;
+  if (!isDatabaseAvailable()) {
+    // Fallback to in-memory storage
+    for (const record of userStore.values()) {
+      if (record.role !== "admin") return true;
+    }
+    return false;
   }
-  return false;
+
+  try {
+    const result = await query<{ count: string }>(
+      "SELECT COUNT(*) as count FROM users WHERE role != 'admin'"
+    );
+
+    const count = parseInt(result[0]?.count ?? "0", 10);
+    return count > 0;
+  } catch (error) {
+    console.error("[users] Failed to check for non-admin users:", error);
+    return false;
+  }
 }
 
+/**
+ * List all non-admin user emails
+ */
 export async function listNonAdminUserEmails(): Promise<string[]> {
-  // Ensure we have the latest snapshot across workers
-  await loadUsersFromStorage();
-  const emails: string[] = [];
-  for (const record of userStore.values()) {
-    if (record.role !== "admin") {
-      emails.push(record.email);
+  if (!isDatabaseAvailable()) {
+    // Fallback to in-memory storage
+    const emails: string[] = [];
+    for (const record of userStore.values()) {
+      if (record.role !== "admin") {
+        emails.push(record.email);
+      }
     }
+    return emails;
   }
-  return emails;
+
+  try {
+    const result = await query<{ email: string }>(
+      "SELECT email FROM users WHERE role != 'admin' ORDER BY email"
+    );
+
+    return result.map((row) => row.email);
+  } catch (error) {
+    console.error("[users] Failed to list non-admin users:", error);
+    return [];
+  }
 }
 
+/**
+ * Get total user count (excluding admins)
+ */
 export async function getTotalUserCount(): Promise<number> {
-  // Reload users to stay in sync across workers/processes
-  await loadUsersFromStorage();
-  let count = 0;
-  for (const record of userStore.values()) {
-    if (record.role !== "admin") {
-      count++;
+  if (!isDatabaseAvailable()) {
+    // Fallback to in-memory storage
+    let count = 0;
+    for (const record of userStore.values()) {
+      if (record.role !== "admin") {
+        count++;
+      }
     }
+    return count;
   }
-  return count;
+
+  try {
+    const result = await query<{ count: string }>(
+      "SELECT COUNT(*) as count FROM users WHERE role != 'admin'"
+    );
+
+    return parseInt(result[0]?.count ?? "0", 10);
+  } catch (error) {
+    console.error("[users] Failed to get user count:", error);
+    return 0;
+  }
 }
-
-

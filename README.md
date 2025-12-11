@@ -27,7 +27,8 @@ This application is ready for production deployment. See [DEPLOYMENT.md](./DEPLO
 
 - Node.js >= 18.17
 - npm >= 10
-- Arduino (e.g., Uno/Nano with USB) + DHT22 wired to pin 2
+- **Neon Postgres Database** (for production) - see [Database Setup](#database-setup)
+- Arduino (e.g., Uno/Nano with USB) + DHT22 wired to pin 2 (optional for real sensors)
 - USB cable (shows up as `USB-SERIAL CH340 (COMx)` on Windows)
 
 ## Install & Run the Web App
@@ -38,6 +39,50 @@ npm run dev
 ```
 
 Visit `http://localhost:3000`. As soon as an authentic reading arrives, "Demo Mode" disappears.
+
+## Database Setup
+
+This application uses **Neon Postgres** for persistent data storage:
+
+### Quick Setup
+
+1. **Create Neon Database** on Vercel:
+   - Go to Vercel Dashboard → Storage → Create Database
+   - Choose **Neon** (Serverless Postgres)
+   - Copy the connection string
+
+2. **Configure Environment Variable**:
+   Create `.env.local` and add:
+   ```bash
+   DATABASE_URL=postgresql://user:password@host/database?sslmode=require
+   ```
+
+3. **Run Migrations**:
+   ```bash
+   npm run db:migrate
+   ```
+
+4. **Verify Setup**:
+   ```bash
+   npm run dev
+   # Check console - should see no database warnings
+   ```
+
+### What Gets Stored in Database
+
+- ✅ **Users & Sessions** - Persistent authentication
+- ✅ **IoT Readings** - Time-series sensor data with full history
+- ✅ **Device Preferences** - Labels, thresholds, and assignments
+- ✅ **Auth Logs** - Login/logout history for audit trail
+
+### Development Without Database
+
+The app includes **fallback to in-memory storage** if `DATABASE_URL` is not set:
+- ⚠️ Data is lost on server restart
+- ⚠️ Limited to 500 readings per device
+- ⚠️ Not recommended for production
+
+**For detailed setup instructions**, see [DATABASE_SETUP.md](./DATABASE_SETUP.md)
 
 ## Authentication & Sign Up
 
@@ -51,10 +96,10 @@ Visit `http://localhost:3000`. As soon as an authentic reading arrives, "Demo Mo
   | `AUTH_PASSWORD_HASH`      | Optional hex-encoded SHA-256 digest (legacy fallback)         |
   | `AUTH_SESSION_TTL_SECONDS`| Session lifetime (defaults to 8 hours)                        |
 
-- Users can self-register at `/signup`. Accounts are hashed with random salts and persisted to `data/users.json` (Git-ignored). Back up or pre-seed this file if you want additional admins beyond the default `.env.local` credentials. Set `"role": "admin"` on any account inside the JSON file if you need it to access `/admin`.
-- Login is enforced on dashboard routes (`/admin-dashboard` for admins, `/user-dashboard` for regular users). Successful logins issue HTTP-only cookies; logout instantly removes the server-side session entry.
-- Authentication events (signups, logins, logouts, failures) are captured in `data/auth-logs.json`. Visit `/admin` while signed in as the admin user (email from `AUTH_EMAIL`) to review the latest 200 entries.
-- Active session tokens are stored in `data/sessions.json` so that login cookies remain valid across server restarts. Delete this file to force all users to reauthenticate.
+- Users can self-register at `/signup`. Accounts are hashed with random salts and stored in the database (or in-memory if no database is configured).
+- Login is enforced on dashboard routes (`/admin-dashboard` for admins, `/user-dashboard` for regular users). Successful logins issue HTTP-only cookies.
+- Authentication events (signups, logins, logouts, failures) are logged to the database. Visit `/admin` while signed in as the admin user (email from `AUTH_EMAIL`) to review authentication logs.
+- Session tokens persist across serverless restarts when using Postgres.
 
 ## Sending Readings Manually
 

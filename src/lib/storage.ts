@@ -1,151 +1,124 @@
 import "server-only";
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { query, isDatabaseAvailable } from "@/lib/db";
 
 /**
- * Storage abstraction that supports both file system (local/dev) and Vercel KV (production)
- * Automatically detects which storage backend to use based on environment
+ * Storage abstraction that uses Neon Postgres
+ * Provides a simple key-value interface backed by a relational database
+ * 
+ * Note: This is a legacy compatibility layer. New code should use direct database queries.
  */
 
-const DATA_DIR = join(process.cwd(), "data");
-const USE_KV = Boolean(process.env.KV_REST_API_URL && process.env.KV_REST_API_TOKEN);
+export interface StorageRecord {
+  key: string;
+  value: string;
+  updated_at: string;
+}
 
-// Dynamically import KV only if available
-let kv: { get: <T>(key: string) => Promise<T | null>; set: (key: string, value: unknown) => Promise<void>; del: (key: string) => Promise<void> } | null = null;
-if (USE_KV) {
+/**
+ * Initialize storage table if it doesn't exist
+ */
+async function ensureStorageTable() {
+  if (!isDatabaseAvailable()) return false;
+
   try {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const kvModule = require("@vercel/kv");
-    kv = kvModule.kv;
-  } catch {
-    // KV not available, will fall back to file system
+    await query(`
+      CREATE TABLE IF NOT EXISTS key_value_storage (
+        key VARCHAR(255) PRIMARY KEY,
+        value TEXT NOT NULL,
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `);
+    return true;
+  } catch (error) {
+    console.error("[storage] Failed to create storage table:", error);
+    return false;
   }
 }
 
-/**
- * Check if Vercel KV is available and configured
- */
-function isKVAvailable(): boolean {
-  return USE_KV;
-}
-
-/**
- * File-based storage operations
- */
-const fileStorage = {
-  read<T>(key: string): T | null {
-    const filePath = join(DATA_DIR, `${key}.json`);
-    if (!existsSync(filePath)) return null;
-    try {
-      const raw = readFileSync(filePath, "utf8");
-      if (!raw.trim()) return null;
-      return JSON.parse(raw) as T;
-    } catch {
-      return null;
-    }
-  },
-
-  write<T>(key: string, data: T): boolean {
-    try {
-      if (!existsSync(DATA_DIR)) mkdirSync(DATA_DIR, { recursive: true });
-      const filePath = join(DATA_DIR, `${key}.json`);
-      const serialized = JSON.stringify(data, null, 2);
-      writeFileSync(filePath, serialized, "utf8");
-      return true;
-    } catch {
-      return false;
-    }
-  },
-
-  delete(key: string): boolean {
-    try {
-      const filePath = join(DATA_DIR, `${key}.json`);
-      if (existsSync(filePath)) {
-        writeFileSync(filePath, "", "utf8");
-      }
-      return true;
-    } catch {
-      return false;
-    }
-  },
-};
-
-/**
- * Vercel KV storage operations
- */
-const kvStorage = {
-  async read<T>(key: string): Promise<T | null> {
-    if (!isKVAvailable() || !kv) return null;
-    try {
-      const data = await kv.get<T>(key);
-      return data ?? null;
-    } catch {
-      return null;
-    }
-  },
-
-  async write<T>(key: string, data: T): Promise<boolean> {
-    if (!isKVAvailable() || !kv) return false;
-    try {
-      await kv.set(key, data);
-      return true;
-    } catch {
-      return false;
-    }
-  },
-
-  async delete(key: string): Promise<boolean> {
-    if (!isKVAvailable() || !kv) return false;
-    try {
-      await kv.del(key);
-      return true;
-    } catch {
-      return false;
-    }
-  },
-};
+// Initialize storage table on module load
+ensureStorageTable().catch(() => {
+  // Silently fail if database is not configured
+});
 
 /**
  * Unified storage interface
- * Automatically uses KV if available, otherwise falls back to file system
  */
 export const storage = {
   /**
    * Read data from storage
    */
   async read<T>(key: string): Promise<T | null> {
-    if (isKVAvailable()) {
-      return await kvStorage.read<T>(key);
+    if (!isDatabaseAvailable()) {
+      console.warn("[storage] Database not available for read:", key);
+      return null;
     }
-    return fileStorage.read<T>(key);
+
+    try {
+      const result = await query<StorageRecord>(
+        "SELECT value FROM key_value_storage WHERE key = $1",
+        [key]
+      );
+
+      if (result.length === 0) return null;
+
+      const parsed = JSON.parse(result[0].value) as T;
+      return parsed;
+    } catch (error) {
+      console.error("[storage] Read error:", error);
+      return null;
+    }
   },
 
   /**
    * Write data to storage
    */
   async write<T>(key: string, data: T): Promise<boolean> {
-    if (isKVAvailable()) {
-      return await kvStorage.write(key, data);
+    if (!isDatabaseAvailable()) {
+      console.warn("[storage] Database not available for write:", key);
+      return false;
     }
-    return fileStorage.write(key, data);
+
+    try {
+      const serialized = JSON.stringify(data);
+      
+      await query(
+        `INSERT INTO key_value_storage (key, value, updated_at) 
+         VALUES ($1, $2, NOW())
+         ON CONFLICT (key) 
+         DO UPDATE SET value = $2, updated_at = NOW()`,
+        [key, serialized]
+      );
+
+      return true;
+    } catch (error) {
+      console.error("[storage] Write error:", error);
+      return false;
+    }
   },
 
   /**
    * Delete data from storage
    */
   async delete(key: string): Promise<boolean> {
-    if (isKVAvailable()) {
-      return await kvStorage.delete(key);
+    if (!isDatabaseAvailable()) {
+      console.warn("[storage] Database not available for delete:", key);
+      return false;
     }
-    return fileStorage.delete(key);
+
+    try {
+      await query("DELETE FROM key_value_storage WHERE key = $1", [key]);
+      return true;
+    } catch (error) {
+      console.error("[storage] Delete error:", error);
+      return false;
+    }
   },
 
   /**
    * Check which storage backend is being used
    */
-  getBackend(): "kv" | "filesystem" {
-    return isKVAvailable() ? "kv" : "filesystem";
+  getBackend(): "postgres" | "unavailable" {
+    return isDatabaseAvailable() ? "postgres" : "unavailable";
   },
 };
-

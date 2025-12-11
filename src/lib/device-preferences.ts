@@ -1,116 +1,30 @@
 import "server-only";
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
-
 import type { DevicePreferences, TemperatureThresholds } from "@/types/devices";
+import { query, isDatabaseAvailable } from "@/lib/db";
 
-const DATA_DIR = join(process.cwd(), "data");
-const PREFERENCES_FILE = join(DATA_DIR, "device-preferences.json");
-const LEGACY_LABELS_FILE = join(DATA_DIR, "device-labels.json");
+interface DevicePreferenceRow {
+  device_id: string;
+  label: string | null;
+  threshold_low_c: string | null;
+  threshold_high_c: string | null;
+}
 
+interface UserDeviceLabelRow {
+  device_id: string;
+  email: string;
+  label: string;
+}
+
+interface UserDeviceThresholdRow {
+  device_id: string;
+  email: string;
+  low_c: string | null;
+  high_c: string | null;
+}
+
+// In-memory cache for when database is not available
 const deviceIdToPreferences = new Map<string, DevicePreferences>();
-
-function loadPreferencesFromDisk() {
-  const fileToRead = existsSync(PREFERENCES_FILE)
-    ? PREFERENCES_FILE
-    : existsSync(LEGACY_LABELS_FILE)
-      ? LEGACY_LABELS_FILE
-      : undefined;
-
-  if (!fileToRead) return;
-
-  try {
-    const raw = readFileSync(fileToRead, "utf8");
-    if (!raw.trim()) return;
-    const parsed = JSON.parse(raw) as Record<string, unknown>;
-    for (const [deviceId, value] of Object.entries(parsed)) {
-      const normalizedId = deviceId.trim();
-      if (!normalizedId) continue;
-
-      if (typeof value === "string") {
-        setPreference(normalizedId, { label: normalizeLabel(value) });
-        continue;
-      }
-
-      if (value && typeof value === "object") {
-        const obj = value as {
-          label?: unknown;
-          thresholds?: unknown;
-          thresholdsByUser?: unknown;
-          labelsByUser?: unknown;
-        };
-        const label = normalizeLabel(obj.label);
-        const legacy = normalizeThresholds(obj.thresholds);
-        const byUser: Record<string, TemperatureThresholds> = {};
-        if (obj.thresholdsByUser && typeof obj.thresholdsByUser === "object") {
-          for (const [email, t] of Object.entries(obj.thresholdsByUser as Record<string, unknown>)) {
-            const normalizedEmail = email.trim().toLowerCase();
-            const norm = normalizeThresholds(t);
-            if (norm && normalizedEmail) byUser[normalizedEmail] = norm;
-          }
-        }
-        const labelsByUser: Record<string, string> = {};
-        if (obj.labelsByUser && typeof obj.labelsByUser === "object") {
-          for (const [email, val] of Object.entries(obj.labelsByUser as Record<string, unknown>)) {
-            const normalizedEmail = email.trim().toLowerCase();
-            const normalized = normalizeLabel(val);
-            if (normalized && normalizedEmail) labelsByUser[normalizedEmail] = normalized;
-          }
-        }
-        const pref: DevicePreferences = { label };
-        if (Object.keys(byUser).length > 0) pref.thresholdsByUser = byUser;
-        if (Object.keys(labelsByUser).length > 0) pref.labelsByUser = labelsByUser;
-        // Keep legacy device-level thresholds if present (used as fallback)
-        if (legacy) pref.thresholds = legacy;
-        setPreference(normalizedId, pref);
-      }
-    }
-  } catch {
-    // ignore malformed files
-  }
-}
-
-function setPreference(deviceId: string, preference: DevicePreferences | undefined) {
-  if (!preference || (!preference.label && !preference.thresholds && !preference.thresholdsByUser && !preference.labelsByUser)) {
-    deviceIdToPreferences.delete(deviceId);
-    return;
-  }
-  deviceIdToPreferences.set(deviceId, preference);
-}
-
-function persistPreferencesToDisk() {
-  try {
-    if (!existsSync(DATA_DIR)) mkdirSync(DATA_DIR, { recursive: true });
-    // Persist raw map content to keep admin-visible structures
-    const obj: Record<string, DevicePreferences> = {};
-    for (const [deviceId, pref] of deviceIdToPreferences.entries()) {
-      const copy: DevicePreferences = { label: pref.label };
-      if (pref.thresholds) copy.thresholds = { ...pref.thresholds };
-      if (pref.thresholdsByUser) {
-        const byUser: Record<string, TemperatureThresholds> = {};
-        for (const [email, t] of Object.entries(pref.thresholdsByUser)) {
-          const normalizedEmail = email.trim().toLowerCase();
-          if (normalizedEmail) byUser[normalizedEmail] = { ...(t ?? {}) };
-        }
-        copy.thresholdsByUser = byUser;
-      }
-      if (pref.labelsByUser) {
-        const byUser: Record<string, string> = {};
-        for (const [email, lbl] of Object.entries(pref.labelsByUser)) {
-          const normalizedEmail = email.trim().toLowerCase();
-          if (lbl?.trim() && normalizedEmail) byUser[normalizedEmail] = lbl;
-        }
-        if (Object.keys(byUser).length > 0) copy.labelsByUser = byUser;
-      }
-      obj[deviceId] = copy;
-    }
-    const serialized = JSON.stringify(obj, null, 2);
-    writeFileSync(PREFERENCES_FILE, serialized, "utf8");
-  } catch {
-    // swallow file errors on purpose
-  }
-}
 
 function normalizeLabel(value: unknown): string | undefined {
   if (typeof value !== "string") return undefined;
@@ -147,253 +61,398 @@ function normalizeThresholds(value: unknown): TemperatureThresholds | undefined 
   };
 }
 
-function hasOwn(object: object, key: string) {
-  return Object.prototype.hasOwnProperty.call(object, key);
-}
+/**
+ * Get device preferences from database
+ */
+async function getDevicePreferencesFromDB(deviceId: string): Promise<DevicePreferences | undefined> {
+  if (!isDatabaseAvailable()) return undefined;
 
-loadPreferencesFromDisk();
+  try {
+    // Get base preferences
+    const prefResult = await query<DevicePreferenceRow>(
+      "SELECT * FROM device_preferences WHERE device_id = $1",
+      [deviceId]
+    );
 
-export function listDevicePreferences(): Record<string, DevicePreferences> {
-  // Reload from disk to stay in sync across workers
-  loadPreferencesFromDisk();
-  const result: Record<string, DevicePreferences> = {};
-  for (const [deviceId, preference] of deviceIdToPreferences.entries()) {
-    const copy: DevicePreferences = { label: preference.label };
-    if (preference.thresholds) copy.thresholds = { ...preference.thresholds };
-    if (preference.thresholdsByUser) {
-      const byUser: Record<string, TemperatureThresholds> = {};
-      for (const [email, t] of Object.entries(preference.thresholdsByUser)) {
-        const normalizedEmail = email.trim().toLowerCase();
-        if (normalizedEmail) byUser[normalizedEmail] = { ...(t ?? {}) };
+    // Get user labels
+    const labelResult = await query<UserDeviceLabelRow>(
+      "SELECT * FROM user_device_labels WHERE device_id = $1",
+      [deviceId]
+    );
+
+    // Get user thresholds
+    const thresholdResult = await query<UserDeviceThresholdRow>(
+      "SELECT * FROM user_device_thresholds WHERE device_id = $1",
+      [deviceId]
+    );
+
+    const pref: DevicePreferences = {
+      label: prefResult[0]?.label ?? undefined,
+    };
+
+    // Add legacy device-level thresholds if present
+    if (prefResult[0]) {
+      const lowC = normalizeThresholdValue(prefResult[0].threshold_low_c);
+      const highC = normalizeThresholdValue(prefResult[0].threshold_high_c);
+      if (lowC !== undefined || highC !== undefined) {
+        pref.thresholds = { lowC, highC };
       }
-      copy.thresholdsByUser = byUser;
     }
-    if (preference.labelsByUser) {
-      const byUser: Record<string, string> = {};
-      for (const [email, lbl] of Object.entries(preference.labelsByUser)) {
-        const normalizedEmail = email.trim().toLowerCase();
-        if (lbl?.trim() && normalizedEmail) byUser[normalizedEmail] = lbl;
+
+    // Add user-specific labels
+    if (labelResult.length > 0) {
+      pref.labelsByUser = {};
+      for (const row of labelResult) {
+        pref.labelsByUser[row.email] = row.label;
       }
-      if (Object.keys(byUser).length > 0) copy.labelsByUser = byUser;
     }
-    result[deviceId] = copy;
+
+    // Add user-specific thresholds
+    if (thresholdResult.length > 0) {
+      pref.thresholdsByUser = {};
+      for (const row of thresholdResult) {
+        const lowC = normalizeThresholdValue(row.low_c);
+        const highC = normalizeThresholdValue(row.high_c);
+        if (lowC !== undefined || highC !== undefined) {
+          pref.thresholdsByUser[row.email] = { lowC, highC };
+        }
+      }
+    }
+
+    return pref;
+  } catch (error) {
+    console.error("[device-preferences] Failed to get preferences:", error);
+    return undefined;
   }
-  return result;
 }
 
-export function getDevicePreferences(deviceId: string): DevicePreferences | undefined {
-  // Reload from disk to stay in sync across workers
-  loadPreferencesFromDisk();
-  const preference = deviceIdToPreferences.get(deviceId.trim());
-  if (!preference) return undefined;
-  const copy: DevicePreferences = { label: preference.label };
-  if (preference.thresholds) copy.thresholds = { ...preference.thresholds };
-  if (preference.thresholdsByUser) {
-    const byUser: Record<string, TemperatureThresholds> = {};
-    for (const [email, t] of Object.entries(preference.thresholdsByUser)) {
-      const normalizedEmail = email.trim().toLowerCase();
-      if (normalizedEmail) byUser[normalizedEmail] = { ...(t ?? {}) };
+/**
+ * List all device preferences
+ */
+export async function listDevicePreferences(): Promise<Record<string, DevicePreferences>> {
+  if (!isDatabaseAvailable()) {
+    // Fallback to in-memory storage
+    const result: Record<string, DevicePreferences> = {};
+    for (const [deviceId, pref] of deviceIdToPreferences.entries()) {
+      result[deviceId] = { ...pref };
     }
-    copy.thresholdsByUser = byUser;
+    return result;
   }
-  if (preference.labelsByUser) {
-    const byUser: Record<string, string> = {};
-    for (const [email, lbl] of Object.entries(preference.labelsByUser)) {
-      const normalizedEmail = email.trim().toLowerCase();
-      if (lbl?.trim() && normalizedEmail) byUser[normalizedEmail] = lbl;
+
+  try {
+    const result: Record<string, DevicePreferences> = {};
+
+    // Get all base preferences
+    const prefResult = await query<DevicePreferenceRow>(
+      "SELECT * FROM device_preferences"
+    );
+
+    // Get all user labels
+    const labelResult = await query<UserDeviceLabelRow>(
+      "SELECT * FROM user_device_labels"
+    );
+
+    // Get all user thresholds
+    const thresholdResult = await query<UserDeviceThresholdRow>(
+      "SELECT * FROM user_device_thresholds"
+    );
+
+    // Build preferences map
+    for (const row of prefResult) {
+      const pref: DevicePreferences = {
+        label: row.label ?? undefined,
+      };
+
+      const lowC = normalizeThresholdValue(row.threshold_low_c);
+      const highC = normalizeThresholdValue(row.threshold_high_c);
+      if (lowC !== undefined || highC !== undefined) {
+        pref.thresholds = { lowC, highC };
+      }
+
+      result[row.device_id] = pref;
     }
-    if (Object.keys(byUser).length > 0) copy.labelsByUser = byUser;
+
+    // Add user labels
+    for (const row of labelResult) {
+      if (!result[row.device_id]) {
+        result[row.device_id] = { label: undefined };
+      }
+      if (!result[row.device_id].labelsByUser) {
+        result[row.device_id].labelsByUser = {};
+      }
+      result[row.device_id].labelsByUser![row.email] = row.label;
+    }
+
+    // Add user thresholds
+    for (const row of thresholdResult) {
+      if (!result[row.device_id]) {
+        result[row.device_id] = { label: undefined };
+      }
+      if (!result[row.device_id].thresholdsByUser) {
+        result[row.device_id].thresholdsByUser = {};
+      }
+      const lowC = normalizeThresholdValue(row.low_c);
+      const highC = normalizeThresholdValue(row.high_c);
+      if (lowC !== undefined || highC !== undefined) {
+        result[row.device_id].thresholdsByUser![row.email] = { lowC, highC };
+      }
+    }
+
+    return result;
+  } catch (error) {
+    console.error("[device-preferences] Failed to list preferences:", error);
+    return {};
   }
-  return copy;
 }
 
-export function updateDevicePreferences(
+/**
+ * Get preferences for a specific device
+ */
+export async function getDevicePreferences(deviceId: string): Promise<DevicePreferences | undefined> {
+  if (!isDatabaseAvailable()) {
+    return deviceIdToPreferences.get(deviceId.trim());
+  }
+
+  return await getDevicePreferencesFromDB(deviceId.trim());
+}
+
+/**
+ * Update device preferences
+ */
+export async function updateDevicePreferences(
   deviceId: string,
   updates: { label?: string }
-): DevicePreferences | undefined {
-  // Reload from disk to stay in sync across workers
-  loadPreferencesFromDisk();
+): Promise<DevicePreferences | undefined> {
   const normalizedId = deviceId.trim();
   if (!normalizedId) return undefined;
 
-  const next: DevicePreferences = { ...(deviceIdToPreferences.get(normalizedId) ?? {}) };
-  let changed = false;
+  const label = normalizeLabel(updates.label ?? "");
 
-  if (hasOwn(updates, "label")) {
-    const label = normalizeLabel(updates.label ?? "");
-    if (label !== next.label) changed = true;
+  if (!isDatabaseAvailable()) {
+    // Fallback to in-memory storage
+    const next: DevicePreferences = { ...(deviceIdToPreferences.get(normalizedId) ?? {}) };
     if (!label) {
       delete next.label;
     } else {
       next.label = label;
     }
-  }
-
-  if (!next.label && !next.thresholds && !next.thresholdsByUser && !next.labelsByUser) {
-    if (deviceIdToPreferences.has(normalizedId)) {
-      changed = true;
-      deviceIdToPreferences.delete(normalizedId);
-    }
-  } else {
     deviceIdToPreferences.set(normalizedId, next);
+    return next;
   }
 
-  if (changed) persistPreferencesToDisk();
+  try {
+    if (label) {
+      await query(
+        `INSERT INTO device_preferences (device_id, label, updated_at)
+         VALUES ($1, $2, NOW())
+         ON CONFLICT (device_id)
+         DO UPDATE SET label = $2, updated_at = NOW()`,
+        [normalizedId, label]
+      );
+    } else {
+      await query(
+        `UPDATE device_preferences SET label = NULL, updated_at = NOW()
+         WHERE device_id = $1`,
+        [normalizedId]
+      );
+    }
 
-  return getDevicePreferences(normalizedId);
+    return await getDevicePreferencesFromDB(normalizedId);
+  } catch (error) {
+    console.error("[device-preferences] Failed to update preferences:", error);
+    return undefined;
+  }
 }
 
-export function listDeviceLabels(): Record<string, string> {
-  // Reload from disk to stay in sync across workers
-  loadPreferencesFromDisk();
+/**
+ * List all device labels (admin view)
+ */
+export async function listDeviceLabels(): Promise<Record<string, string>> {
+  const prefs = await listDevicePreferences();
   const result: Record<string, string> = {};
-  for (const [deviceId, preference] of deviceIdToPreferences.entries()) {
-    if (preference.label) result[deviceId] = preference.label;
+  for (const [deviceId, pref] of Object.entries(prefs)) {
+    if (pref.label) result[deviceId] = pref.label;
   }
   return result;
 }
 
-export function getDeviceLabel(deviceId: string): string | undefined {
-  return deviceIdToPreferences.get(deviceId.trim())?.label;
+/**
+ * Get device label
+ */
+export async function getDeviceLabel(deviceId: string): Promise<string | undefined> {
+  const pref = await getDevicePreferences(deviceId.trim());
+  return pref?.label;
 }
 
-export function setDeviceLabel(deviceId: string, label: string) {
-  updateDevicePreferences(deviceId, { label });
+/**
+ * Set device label
+ */
+export async function setDeviceLabel(deviceId: string, label: string) {
+  await updateDevicePreferences(deviceId, { label });
 }
 
-export function getUserLabel(deviceId: string, email: string): string | undefined {
-  // Reload from disk to stay in sync across workers
-  loadPreferencesFromDisk();
-  const pref = deviceIdToPreferences.get(deviceId.trim());
+/**
+ * Get user-specific label for a device
+ */
+export async function getUserLabel(deviceId: string, email: string): Promise<string | undefined> {
+  const pref = await getDevicePreferences(deviceId.trim());
   if (!pref) return undefined;
   const normalizedEmail = email.trim().toLowerCase();
-  const userLabel = pref.labelsByUser?.[normalizedEmail];
-  return userLabel ?? pref.label;
+  return pref.labelsByUser?.[normalizedEmail] ?? pref.label;
 }
 
-export function setUserLabel(deviceId: string, email: string, label: string | null | undefined) {
-  // Reload from disk to stay in sync across workers
-  loadPreferencesFromDisk();
+/**
+ * Set user-specific label for a device
+ */
+export async function setUserLabel(deviceId: string, email: string, label: string | null | undefined) {
   const normalizedId = deviceId.trim();
-  if (!normalizedId) return;
   const normalizedEmail = email.trim().toLowerCase();
-  const next: DevicePreferences = { ...(deviceIdToPreferences.get(normalizedId) ?? {}) };
-  next.labelsByUser = { ...(next.labelsByUser ?? {}) };
+  if (!normalizedId) return;
+
   const normalizedLabel = normalizeLabel(label);
-  let changed = false;
-  if (!normalizedLabel) {
-    if (next.labelsByUser[normalizedEmail]) {
+
+  if (!isDatabaseAvailable()) {
+    // Fallback to in-memory storage
+    const next: DevicePreferences = { ...(deviceIdToPreferences.get(normalizedId) ?? {}) };
+    next.labelsByUser = { ...(next.labelsByUser ?? {}) };
+    if (!normalizedLabel) {
       delete next.labelsByUser[normalizedEmail];
-      changed = true;
-    }
-  } else {
-    if (next.labelsByUser[normalizedEmail] !== normalizedLabel) {
+    } else {
       next.labelsByUser[normalizedEmail] = normalizedLabel;
-      changed = true;
     }
-  }
-  if (Object.keys(next.labelsByUser).length === 0) delete next.labelsByUser;
-  if (changed) {
+    if (Object.keys(next.labelsByUser).length === 0) delete next.labelsByUser;
     deviceIdToPreferences.set(normalizedId, next);
-    persistPreferencesToDisk();
+    return;
+  }
+
+  try {
+    if (normalizedLabel) {
+      await query(
+        `INSERT INTO user_device_labels (device_id, email, label, updated_at)
+         VALUES ($1, $2, $3, NOW())
+         ON CONFLICT (device_id, email)
+         DO UPDATE SET label = $3, updated_at = NOW()`,
+        [normalizedId, normalizedEmail, normalizedLabel]
+      );
+    } else {
+      await query(
+        `DELETE FROM user_device_labels WHERE device_id = $1 AND email = $2`,
+        [normalizedId, normalizedEmail]
+      );
+    }
+  } catch (error) {
+    console.error("[device-preferences] Failed to set user label:", error);
   }
 }
 
-export function getUserThresholds(deviceId: string, email: string): TemperatureThresholds | undefined {
-  // Reload from disk to stay in sync across workers
-  loadPreferencesFromDisk();
-  const pref = deviceIdToPreferences.get(deviceId.trim());
+/**
+ * Get user-specific thresholds for a device
+ */
+export async function getUserThresholds(deviceId: string, email: string): Promise<TemperatureThresholds | undefined> {
+  const pref = await getDevicePreferences(deviceId.trim());
   if (!pref) return undefined;
-  const result =
-    pref.thresholdsByUser?.[email.trim().toLowerCase()] ??
-    // fallback to legacy device-level thresholds if present
-    pref.thresholds;
-  return result ? { ...result } : undefined;
-}
-
-export function setUserThresholds(deviceId: string, email: string, thresholds?: TemperatureThresholds | null) {
-  // Reload from disk to stay in sync across workers
-  loadPreferencesFromDisk();
-  const normalizedId = deviceId.trim();
-  if (!normalizedId) return;
   const normalizedEmail = email.trim().toLowerCase();
-  const next: DevicePreferences = { ...(deviceIdToPreferences.get(normalizedId) ?? {}) };
+  return pref.thresholdsByUser?.[normalizedEmail] ?? pref.thresholds;
+}
+
+/**
+ * Set user-specific thresholds for a device
+ */
+export async function setUserThresholds(deviceId: string, email: string, thresholds?: TemperatureThresholds | null) {
+  const normalizedId = deviceId.trim();
+  const normalizedEmail = email.trim().toLowerCase();
+  if (!normalizedId) return;
+
   const norm = normalizeThresholds(thresholds ?? undefined);
-  next.thresholdsByUser = { ...(next.thresholdsByUser ?? {}) };
-  let changed = false;
-  if (!norm) {
-    if (next.thresholdsByUser[normalizedEmail]) {
+
+  if (!isDatabaseAvailable()) {
+    // Fallback to in-memory storage
+    const next: DevicePreferences = { ...(deviceIdToPreferences.get(normalizedId) ?? {}) };
+    next.thresholdsByUser = { ...(next.thresholdsByUser ?? {}) };
+    if (!norm) {
       delete next.thresholdsByUser[normalizedEmail];
-      changed = true;
-    }
-  } else {
-    const prev = next.thresholdsByUser[normalizedEmail];
-    if (!prev || prev.lowC !== norm.lowC || prev.highC !== norm.highC) {
+    } else {
       next.thresholdsByUser[normalizedEmail] = norm;
-      changed = true;
     }
-  }
-  // Clean empty map
-  if (Object.keys(next.thresholdsByUser).length === 0) delete next.thresholdsByUser;
-  if (changed) {
+    if (Object.keys(next.thresholdsByUser).length === 0) delete next.thresholdsByUser;
     deviceIdToPreferences.set(normalizedId, next);
-    persistPreferencesToDisk();
+    return;
+  }
+
+  try {
+    if (norm) {
+      await query(
+        `INSERT INTO user_device_thresholds (device_id, email, low_c, high_c, updated_at)
+         VALUES ($1, $2, $3, $4, NOW())
+         ON CONFLICT (device_id, email)
+         DO UPDATE SET low_c = $3, high_c = $4, updated_at = NOW()`,
+        [normalizedId, normalizedEmail, norm.lowC ?? null, norm.highC ?? null]
+      );
+    } else {
+      await query(
+        `DELETE FROM user_device_thresholds WHERE device_id = $1 AND email = $2`,
+        [normalizedId, normalizedEmail]
+      );
+    }
+  } catch (error) {
+    console.error("[device-preferences] Failed to set user thresholds:", error);
   }
 }
 
-export function listDevicePreferencesForUser(email: string): Record<string, DevicePreferences> {
-  // Reload from disk to stay in sync across workers
-  loadPreferencesFromDisk();
+/**
+ * List device preferences for a specific user
+ */
+export async function listDevicePreferencesForUser(email: string): Promise<Record<string, DevicePreferences>> {
+  const allPrefs = await listDevicePreferences();
   const result: Record<string, DevicePreferences> = {};
   const normalizedEmail = email.trim().toLowerCase();
-  for (const [deviceId, pref] of deviceIdToPreferences.entries()) {
-    const thresholds = getUserThresholds(deviceId, normalizedEmail);
-    const entry: DevicePreferences = { label: getUserLabel(deviceId, normalizedEmail) ?? pref.label };
-    if (thresholds) entry.thresholds = thresholds;
+
+  for (const [deviceId, pref] of Object.entries(allPrefs)) {
+    const userLabel = pref.labelsByUser?.[normalizedEmail] ?? pref.label;
+    const userThresholds = pref.thresholdsByUser?.[normalizedEmail] ?? pref.thresholds;
+
+    const entry: DevicePreferences = { label: userLabel };
+    if (userThresholds) entry.thresholds = userThresholds;
     result[deviceId] = entry;
   }
+
   return result;
 }
 
-export function listThresholdsByUser(): Record<string, Record<string, TemperatureThresholds>> {
-  // Reload from disk to stay in sync across workers
-  loadPreferencesFromDisk();
+/**
+ * List all thresholds grouped by user
+ */
+export async function listThresholdsByUser(): Promise<Record<string, Record<string, TemperatureThresholds>>> {
+  const allPrefs = await listDevicePreferences();
   const out: Record<string, Record<string, TemperatureThresholds>> = {};
-  for (const [deviceId, pref] of deviceIdToPreferences.entries()) {
-    const byUser: Record<string, TemperatureThresholds> = {};
-    const src = pref.thresholdsByUser ?? {};
-    for (const [email, t] of Object.entries(src)) {
-      const normalizedEmail = email.trim().toLowerCase();
-      if (normalizedEmail) byUser[normalizedEmail] = { ...(t ?? {}) };
+
+  for (const [deviceId, pref] of Object.entries(allPrefs)) {
+    if (pref.thresholdsByUser) {
+      out[deviceId] = { ...pref.thresholdsByUser };
     }
-    if (Object.keys(byUser).length > 0) out[deviceId] = byUser;
   }
+
   return out;
 }
 
-export function getAllUserThresholds(deviceId: string): Record<string, TemperatureThresholds> {
-  // Reload from disk to stay in sync across workers
-  loadPreferencesFromDisk();
-  const pref = deviceIdToPreferences.get(deviceId.trim());
-  if (!pref?.thresholdsByUser) return {};
-  const byUser: Record<string, TemperatureThresholds> = {};
-  for (const [email, t] of Object.entries(pref.thresholdsByUser)) {
-    const normalizedEmail = email.trim().toLowerCase();
-    if (normalizedEmail) byUser[normalizedEmail] = { ...(t ?? {}) };
-  }
-  return byUser;
+/**
+ * Get all user thresholds for a device
+ */
+export async function getAllUserThresholds(deviceId: string): Promise<Record<string, TemperatureThresholds>> {
+  const pref = await getDevicePreferences(deviceId.trim());
+  return pref?.thresholdsByUser ?? {};
 }
 
-export function listDeviceLabelsForUser(email: string): Record<string, string> {
-  // Reload from disk to stay in sync across workers
-  loadPreferencesFromDisk();
+/**
+ * List device labels for a specific user
+ */
+export async function listDeviceLabelsForUser(email: string): Promise<Record<string, string>> {
+  const prefs = await listDevicePreferencesForUser(email);
   const result: Record<string, string> = {};
-  const normalizedEmail = email.trim().toLowerCase();
-  for (const [deviceId, pref] of deviceIdToPreferences.entries()) {
-    const label = pref.labelsByUser?.[normalizedEmail] ?? pref.label;
-    if (label) result[deviceId] = label;
+  
+  for (const [deviceId, pref] of Object.entries(prefs)) {
+    if (pref.label) result[deviceId] = pref.label;
   }
+
   return result;
 }
-
-

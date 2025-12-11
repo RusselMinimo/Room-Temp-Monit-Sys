@@ -5,7 +5,6 @@ import type { Reading } from "@/lib/store";
 import type { DevicePreferences, TemperatureThresholds } from "@/types/devices";
 import type { ActiveAlert } from "@/types/alerts";
 import { ConnectionStatus } from "./connection-status";
-import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { AlertTriangle, CheckCircle, Droplets, Thermometer, Timer, WifiOff } from "lucide-react";
 import { TemperatureChart, type TemperatureSample } from "./temperature-chart";
@@ -51,10 +50,8 @@ export function LiveReadings({ viewAsUser }: LiveReadingsProps = {}) {
   const [isRealtime, setIsRealtime] = useState<boolean>(false);
   const [historyByDevice, setHistoryByDevice] = useState<Record<string, TemperatureSample[]>>({});
   const [devicePreferences, setDevicePreferences] = useState<Record<string, DevicePreferences>>({});
-  const [allDevicePreferences, setAllDevicePreferences] = useState<Record<string, DevicePreferences>>({}); // Full preferences with all labelsByUser for admin cards
   const [activeAlerts, setActiveAlerts] = useState<ActiveAlert[]>([]);
   const [isAdmin, setIsAdmin] = useState<boolean>(false);
-  const [preferencesByUser, setPreferencesByUser] = useState<Record<string, Record<string, TemperatureThresholds>>>({});
   const [assignedUsersByDevice, setAssignedUsersByDevice] = useState<Record<string, string>>({});
   const [userAuthStatuses, setUserAuthStatuses] = useState<UserAuthStatus[]>([]);
 
@@ -93,18 +90,10 @@ export function LiveReadings({ viewAsUser }: LiveReadingsProps = {}) {
               ? data.preferences
               : derivePreferencesFromLabels(data.labels ?? {});
           setDevicePreferences(nextPreferences);
-          // For admins, store full device preferences with all labelsByUser for admin cards
-          if (data.allPreferences) {
-            setAllDevicePreferences(data.allPreferences);
-          } else if (data.isAdmin) {
-            // Fallback: if allPreferences not provided but user is admin, use preferences
-            setAllDevicePreferences(nextPreferences);
-          }
           setActiveAlerts(data.alerts ?? []);
           setIsAdmin(Boolean(data.isAdmin));
-          setPreferencesByUser(data.preferencesByUser ?? {});
           setAssignedUsersByDevice(data.assignedUsersByDevice ?? {});
-          setUserAuthStatuses(data.userAuthStatuses ?? []);
+          setUserAuthStatuses(Array.isArray(data.userAuthStatuses) ? data.userAuthStatuses : []);
           // server sends hasNonAdminUsers but UI no longer uses it directly
           // no-op: server filters to registered users only
         }
@@ -207,23 +196,16 @@ export function LiveReadings({ viewAsUser }: LiveReadingsProps = {}) {
       };
       if (data.preferences) {
         setDevicePreferences(data.preferences);
-        // For admins, also update allDevicePreferences since POST returns full preferences
-        if (isAdmin) {
-          setAllDevicePreferences(data.preferences);
-        }
       } else if (data.labels) {
         const derived = derivePreferencesFromLabels(data.labels);
         setDevicePreferences(derived);
-        if (isAdmin) {
-          setAllDevicePreferences(derived);
-        }
       }
       return true;
     } catch {
       // ignore for now
     }
     return false;
-  }, [isAdmin]);
+  }, []);
 
   const realReadings = useMemo(() => readings.filter((reading) => reading.isDemo !== true), [readings]);
   const demoReadings = useMemo(() => readings.filter((reading) => reading.isDemo === true), [readings]);
@@ -318,16 +300,11 @@ export function LiveReadings({ viewAsUser }: LiveReadingsProps = {}) {
             <DeviceGrid
               readings={sortedReadings}
               preferences={devicePreferences}
-              allPreferences={allDevicePreferences}
               histories={historyByDevice}
               onSavePreferences={handlePreferenceSave}
               nowMs={nowMs}
               isAdmin={isAdmin}
-              preferencesByUser={preferencesByUser}
-              assignedUsersByDevice={assignedUsersByDevice}
-              userAuthStatuses={userAuthStatuses}
               alerts={bannerAlerts}
-              searchParams={searchParams}
             />
           )}
         </>
@@ -336,16 +313,11 @@ export function LiveReadings({ viewAsUser }: LiveReadingsProps = {}) {
         <DeviceGrid
           readings={sortedReadings}
           preferences={devicePreferences}
-          allPreferences={allDevicePreferences}
           histories={historyByDevice}
           onSavePreferences={handlePreferenceSave}
           nowMs={nowMs}
           isAdmin={isAdmin}
-          preferencesByUser={preferencesByUser}
-          assignedUsersByDevice={assignedUsersByDevice}
-          userAuthStatuses={userAuthStatuses}
           alerts={bannerAlerts}
-          searchParams={searchParams}
         />
       ) : (
         // Empty state for non-admin users with no readings
@@ -636,16 +608,11 @@ function formatRelativeTime(isoString: string): string {
 interface DeviceGridProps {
   readings: Reading[];
   preferences: Record<string, DevicePreferences>;
-  allPreferences?: Record<string, DevicePreferences>; // Full device preferences with all labelsByUser for admin cards
   histories: Record<string, TemperatureSample[]>;
   nowMs: number;
   onSavePreferences: (deviceId: string, draft: DeviceDraft) => Promise<boolean>;
   isAdmin: boolean;
-  preferencesByUser?: Record<string, Record<string, TemperatureThresholds>>;
-  assignedUsersByDevice?: Record<string, string>;
-  userAuthStatuses?: UserAuthStatus[];
   alerts?: ActiveAlert[];
-  searchParams: ReturnType<typeof useSearchParams> | null;
 }
 
 interface DeviceDraft {
@@ -657,16 +624,11 @@ interface DeviceDraft {
 function DeviceGrid({
   readings,
   preferences,
-  allPreferences,
   histories,
   nowMs,
   onSavePreferences,
   isAdmin,
-  preferencesByUser,
-  assignedUsersByDevice,
-  userAuthStatuses,
   alerts,
-  searchParams,
 }: DeviceGridProps) {
   const [draftOverrides, setDraftOverrides] = useState<Record<string, DeviceDraft>>({});
   const [errors, setErrors] = useState<Record<string, string | undefined>>({});
@@ -872,7 +834,6 @@ function DeviceGrid({
             </article>
             )}
 
-            {/* Removed AdminUserRooms cards to fix navigation bug */}
             </>
           );
         })}
@@ -907,161 +868,6 @@ function MiniSparkline({ data }: { data: TemperatureSample[] }) {
         points={coords.join(" ")}
       />
     </svg>
-  );
-}
-
-function AdminUserRooms({
-  reading,
-  preference,
-  preferencesByUser,
-  preferredEmail,
-  userAuthStatuses,
-  alerts,
-  searchParams,
-}: {
-  reading: Reading;
-  preference?: DevicePreferences;
-  preferencesByUser?: Record<string, Record<string, TemperatureThresholds>>;
-  preferredEmail?: string;
-  userAuthStatuses?: UserAuthStatus[];
-  alerts?: ActiveAlert[];
-  searchParams: ReturnType<typeof useSearchParams> | null;
-}) {
-  const currentAs = normalizeEmail(searchParams?.get("as") ?? undefined);
-  const normalizedPreferred = normalizeEmail(preferredEmail);
-  const thresholdsByUser = normalizeRecord(preferencesByUser?.[reading.deviceId]);
-  const labelsByUser = normalizeRecord(preference?.labelsByUser);
-  const uniqueEmails = Array.from(new Set([...Object.keys(thresholdsByUser), ...Object.keys(labelsByUser)])).filter(Boolean);
-
-  if (uniqueEmails.length === 0) return null;
-
-  return (
-    <>
-      {uniqueEmails.map((normalizedEmail) => {
-        const displayEmail = normalizedEmail;
-        // Show the user's custom label, or fall back to the device's default label
-        const label = labelsByUser[normalizedEmail] ?? preference?.label ?? "Room label not set";
-        const thresholds = thresholdsByUser[normalizedEmail];
-        const thresholdState = getThresholdState(reading.temperatureC, thresholds);
-        const isPreferred = normalizedPreferred ? normalizedPreferred === normalizedEmail : false;
-        const isViewingThisUser = currentAs ? currentAs === normalizedEmail : false;
-        const userStatus = userAuthStatuses?.find(
-          (status) => status.email.toLowerCase() === normalizedEmail.toLowerCase()
-        );
-        const isUserOnline = userStatus?.isOnline ?? false;
-        const lastEventTime = userStatus?.lastEventTime;
-        const userAlert = alerts?.find(
-          (a) => a.deviceId === reading.deviceId && a.userEmail === normalizedEmail
-        );
-
-        return (
-          <article
-            key={`${reading.deviceId}-${normalizedEmail}`}
-            className={`flex flex-col gap-3 rounded-2xl border border-border/70 bg-card/70 p-4 shadow-sm`}
-          >
-            {userAlert && (
-              <div
-                className={`rounded-xl border px-3 py-2 text-sm ${
-                  userAlert.variant === "high"
-                    ? "border-rose-200 bg-rose-50 text-rose-900"
-                    : "border-sky-200 bg-sky-50 text-sky-900"
-                }`}
-                aria-live="polite"
-              >
-                <div className="flex items-center gap-2 font-semibold">
-                  {userAlert.variant === "high" ? (
-                    <AlertTriangle className="h-4 w-4" />
-                  ) : (
-                    <Thermometer className="h-4 w-4" />
-                  )}
-                  <span className="text-xs uppercase tracking-wide">
-                    {userAlert.variant === "high" ? "High temp alert" : "Low temp alert"}
-                  </span>
-                </div>
-                <p className="mt-1 text-xs">
-                  {userAlert.variant === "high"
-                    ? `Temperature ${userAlert.temperatureC.toFixed(1)}°C is above the ${userAlert.thresholdC.toFixed(1)}°C limit.`
-                    : `Temperature ${userAlert.temperatureC.toFixed(1)}°C is below the ${userAlert.thresholdC.toFixed(1)}°C limit.`}
-                </p>
-              </div>
-            )}
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-              <div>
-                <p className="text-xs uppercase tracking-wide text-muted-foreground">Room label</p>
-                <p className="text-base font-semibold">{label}</p>
-                {thresholdState.variant === "high" && (
-                  <p className="text-sm font-medium text-rose-600">⚠️ Warning: Temp is too high</p>
-                )}
-                {thresholdState.variant === "low" && (
-                  <p className="text-sm font-medium text-sky-600">⚠️ Warning: Temp is too low</p>
-                )}
-                <p className="text-xs text-muted-foreground">{displayEmail}</p>
-              </div>
-              <div className="flex items-center gap-2">
-                {isPreferred && (
-                  <span className="rounded-full bg-primary/10 px-2 py-0.5 text-[10px] font-semibold uppercase text-primary">
-                    Assigned
-                  </span>
-                )}
-                <Button asChild type="button" size="sm" variant={isViewingThisUser ? "default" : "outline"}>
-                  <Link href={`/user-dashboard?as=${encodeURIComponent(displayEmail)}`}>
-                    {isViewingThisUser ? "Viewing" : "View"}
-                  </Link>
-                </Button>
-                <div className="flex flex-col items-end gap-1">
-                  <span
-                    className={`inline-flex items-center gap-1 rounded-full px-3 py-1 text-xs font-medium ${
-                      isUserOnline ? "bg-emerald-50 text-emerald-700" : "bg-gray-100 text-gray-600"
-                    }`}
-                  >
-                    {isUserOnline ? <CheckCircle className="h-3.5 w-3.5" /> : <WifiOff className="h-3.5 w-3.5" />}
-                    {isUserOnline ? "Online" : "Offline"}
-                  </span>
-                  {lastEventTime && (
-                    <span className="text-[10px] text-muted-foreground">
-                      {isUserOnline
-                        ? `Logged in ${formatRelativeTime(lastEventTime)}`
-                        : `Logged out ${formatRelativeTime(lastEventTime)}`}
-                    </span>
-                  )}
-                </div>
-              </div>
-            </div>
-
-            <div className="grid gap-3 sm:grid-cols-3">
-              <div className="rounded-xl border border-border/60 bg-background/90 p-3 shadow-inner">
-                <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Current temp</p>
-                <p
-                  className={`text-2xl font-semibold ${
-                    thresholdState.variant === "high"
-                      ? "text-rose-600"
-                      : thresholdState.variant === "low"
-                        ? "text-sky-600"
-                        : ""
-                  }`}
-                >
-                  {reading.temperatureC.toFixed(1)}
-                  <span className="ml-1 text-sm text-muted-foreground">°C</span>
-                </p>
-                <p className="text-xs text-muted-foreground">{thresholdState.message}</p>
-              </div>
-              <div className="rounded-xl border border-border/60 bg-background/90 p-3 shadow-inner">
-                <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Last update</p>
-                <p className="flex items-center gap-1 text-sm font-medium text-muted-foreground">
-                  <Timer className="h-3.5 w-3.5" />
-                  {formatTime(reading.ts)}
-                </p>
-              </div>
-              <div className="rounded-xl border border-border/60 bg-background/90 p-3 shadow-inner">
-                <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Thresholds</p>
-                <p className="text-sm font-medium">{formatThresholdRange(thresholds)}</p>
-                <p className="text-xs text-muted-foreground">Low · High</p>
-              </div>
-            </div>
-          </article>
-        );
-      })}
-    </>
   );
 }
 
@@ -1187,17 +993,6 @@ function createDraftFromPreference(preference?: DevicePreferences): DeviceDraft 
     lowC: preference?.thresholds?.lowC !== undefined ? preference.thresholds.lowC.toString() : "",
     highC: preference?.thresholds?.highC !== undefined ? preference.thresholds.highC.toString() : "",
   };
-}
-
-function normalizeRecord<T>(input?: Record<string, T>): Record<string, T> {
-  if (!input) return {};
-  const out: Record<string, T> = {};
-  for (const [email, value] of Object.entries(input)) {
-    const normalized = normalizeEmail(email);
-    if (!normalized) continue;
-    out[normalized] = value;
-  }
-  return out;
 }
 
 function normalizeEmail(value?: string | null): string | undefined {

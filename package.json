@@ -7,9 +7,11 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "bridge:serial": "tsx scripts/serial-bridge.ts"
+    "bridge:serial": "tsx scripts/serial-bridge.ts",
+    "db:migrate": "tsx src/lib/migrations/migrate.ts"
   },
   "dependencies": {
+    "@neondatabase/serverless": "^1.0.2",
     "@radix-ui/react-slot": "^1.2.3",
     "@vercel/kv": "^1.0.1",
     "class-variance-authority": "^0.7.1",
@@ -18,9 +20,11 @@
     "lucide-react": "^0.552.0",
     "next": "14.2.15",
     "nuqs": "^2.7.2",
+    "postgres": "^3.4.7",
     "react": "18.2.0",
     "react-dom": "18.2.0",
     "serialport": "^12.0.0",
+    "server-only": "^0.0.1",
     "tailwind-merge": "^3.3.1",
     "zod": "^4.1.12"
   },

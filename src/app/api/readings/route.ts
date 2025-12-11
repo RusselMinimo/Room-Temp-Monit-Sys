@@ -59,7 +59,7 @@ export async function GET(request: NextRequest) {
   let readings = listLatestReadings();
   // Enforce room scoping for non-admin users
   if (impersonatedEmail) {
-    const assigned = getAssignedDeviceId(impersonatedEmail);
+    const assigned = await getAssignedDeviceId(impersonatedEmail);
     const demoOnly = !hasRealDevices;
     if (assigned) {
       readings = readings.filter((r) => r.deviceId === assigned);
@@ -68,7 +68,7 @@ export async function GET(request: NextRequest) {
       readings = readings.filter((r) => r.isDemo !== true);
     } // if demoOnly and unassigned, allow showing demo data
   } else if (session && !isAdmin) {
-    const assigned = getAssignedDeviceId(session.email);
+    const assigned = await getAssignedDeviceId(session.email);
     const demoOnly = !hasRealDevices;
     if (assigned) {
       readings = readings.filter((r) => r.deviceId === assigned);
@@ -114,9 +114,9 @@ export async function GET(request: NextRequest) {
     }
     return out;
   })();
-  const assignedUsersByDevice = (() => {
+  const assignedUsersByDevice = await (async () => {
     if (!isAdmin) return undefined;
-    const assignments = listAssignments();
+    const assignments = await listAssignments();
     const inverted: Record<string, string> = {};
     for (const [email, deviceId] of Object.entries(assignments)) {
       if (!deviceId) continue;
@@ -131,14 +131,16 @@ export async function GET(request: NextRequest) {
     if (isAdmin) return alertsAll;
     return alertsAll.filter((a) => !a.userEmail || a.userEmail === session?.email);
   })();
-  const userAuthStatuses = isAdmin ? getUserAuthStatuses() : undefined;
+  const userAuthStatuses = isAdmin ? await getUserAuthStatuses() : undefined;
+
+  const assignedDeviceId = impersonatedEmail
+    ? await getAssignedDeviceId(impersonatedEmail)
+    : session && !isAdmin
+      ? await getAssignedDeviceId(session.email)
+      : undefined;
 
   return NextResponse.json({
-    assignedDeviceId: impersonatedEmail
-      ? getAssignedDeviceId(impersonatedEmail)
-      : session && !isAdmin
-        ? getAssignedDeviceId(session.email)
-        : undefined,
+    assignedDeviceId,
     readings,
     realDeviceCount: realReadings.length,
     demoDeviceCount: demoReadings.length,

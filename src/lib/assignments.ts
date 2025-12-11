@@ -1,74 +1,113 @@
 import "server-only";
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { query, isDatabaseAvailable } from "@/lib/db";
 
-const DATA_DIR = join(process.cwd(), "data");
-const ASSIGNMENTS_FILE = join(DATA_DIR, "user-assignments.json");
+interface AssignmentRow {
+  email: string;
+  device_id: string;
+}
 
-// email (lowercased) -> deviceId
+// In-memory cache for when database is not available
 const emailToDeviceId = new Map<string, string>();
 
-function loadFromDisk() {
+/**
+ * Get assigned device ID for a user
+ */
+export async function getAssignedDeviceId(email: string): Promise<string | undefined> {
+  if (!email || typeof email !== "string") return undefined;
+  const normalizedEmail = email.trim().toLowerCase();
+
+  if (!isDatabaseAvailable()) {
+    // Fallback to in-memory storage
+    return emailToDeviceId.get(normalizedEmail);
+  }
+
   try {
-    if (!existsSync(ASSIGNMENTS_FILE)) return;
-    const raw = readFileSync(ASSIGNMENTS_FILE, "utf8");
-    if (!raw.trim()) return;
-    const parsed = JSON.parse(raw) as Record<string, unknown>;
-    for (const [email, deviceId] of Object.entries(parsed)) {
-      if (typeof email === "string" && typeof deviceId === "string" && deviceId.trim()) {
-        emailToDeviceId.set(email.trim().toLowerCase(), deviceId.trim());
-      }
-    }
-  } catch {
-    // ignore malformed files
+    const result = await query<AssignmentRow>(
+      "SELECT device_id FROM device_assignments WHERE email = $1",
+      [normalizedEmail]
+    );
+
+    if (result.length === 0) return undefined;
+    return result[0].device_id;
+  } catch (error) {
+    console.error("[assignments] Failed to get assignment:", error);
+    return undefined;
   }
 }
 
-function persistToDisk() {
+/**
+ * Set device assignment for a user
+ */
+export async function setAssignment(email: string, deviceId?: string | null) {
+  if (!email || typeof email !== "string") return;
+  const normalizedEmail = email.trim().toLowerCase();
+  if (!normalizedEmail) return;
+
+  if (!deviceId || typeof deviceId !== "string" || !deviceId.trim()) {
+    // Remove assignment
+    if (!isDatabaseAvailable()) {
+      emailToDeviceId.delete(normalizedEmail);
+      return;
+    }
+
+    try {
+      await query(
+        "DELETE FROM device_assignments WHERE email = $1",
+        [normalizedEmail]
+      );
+    } catch (error) {
+      console.error("[assignments] Failed to delete assignment:", error);
+    }
+    return;
+  }
+
+  const normalizedDeviceId = deviceId.trim();
+
+  if (!isDatabaseAvailable()) {
+    // Fallback to in-memory storage
+    emailToDeviceId.set(normalizedEmail, normalizedDeviceId);
+    return;
+  }
+
   try {
-    if (!existsSync(DATA_DIR)) mkdirSync(DATA_DIR, { recursive: true });
+    await query(
+      `INSERT INTO device_assignments (email, device_id, updated_at)
+       VALUES ($1, $2, NOW())
+       ON CONFLICT (email)
+       DO UPDATE SET device_id = $2, updated_at = NOW()`,
+      [normalizedEmail, normalizedDeviceId]
+    );
+  } catch (error) {
+    console.error("[assignments] Failed to set assignment:", error);
+  }
+}
+
+/**
+ * List all device assignments
+ */
+export async function listAssignments(): Promise<Record<string, string>> {
+  if (!isDatabaseAvailable()) {
+    // Fallback to in-memory storage
     const out: Record<string, string> = {};
     for (const [email, deviceId] of emailToDeviceId.entries()) {
       out[email] = deviceId;
     }
-    writeFileSync(ASSIGNMENTS_FILE, JSON.stringify(out, null, 2), "utf8");
-  } catch {
-    // swallow on purpose
+    return out;
   }
-}
 
-loadFromDisk();
+  try {
+    const result = await query<AssignmentRow>(
+      "SELECT email, device_id FROM device_assignments"
+    );
 
-export function getAssignedDeviceId(email: string): string | undefined {
-  if (!email || typeof email !== "string") return undefined;
-  return emailToDeviceId.get(email.trim().toLowerCase());
-}
-
-export function setAssignment(email: string, deviceId?: string | null) {
-  if (!email || typeof email !== "string") return;
-  const normalizedEmail = email.trim().toLowerCase();
-  if (!normalizedEmail) return;
-  if (!deviceId || typeof deviceId !== "string" || !deviceId.trim()) {
-    if (emailToDeviceId.delete(normalizedEmail)) {
-      persistToDisk();
+    const out: Record<string, string> = {};
+    for (const row of result) {
+      out[row.email] = row.device_id;
     }
-    return;
-  }
-  const normalizedDeviceId = deviceId.trim();
-  const prev = emailToDeviceId.get(normalizedEmail);
-  if (prev !== normalizedDeviceId) {
-    emailToDeviceId.set(normalizedEmail, normalizedDeviceId);
-    persistToDisk();
+    return out;
+  } catch (error) {
+    console.error("[assignments] Failed to list assignments:", error);
+    return {};
   }
 }
-
-export function listAssignments(): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (const [email, deviceId] of emailToDeviceId.entries()) {
-    out[email] = deviceId;
-  }
-  return out;
-}
-
-

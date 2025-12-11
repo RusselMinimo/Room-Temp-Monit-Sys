@@ -1,6 +1,6 @@
 import "server-only";
 
-import { listNonAdminUserEmails, findUser, type UserRecord } from "./users";
+import { listNonAdminUserEmails, findUser } from "./users";
 import { getAssignedDeviceId } from "./assignments";
 import { listDevicePreferences } from "./device-preferences";
 import { getUserAuthStatuses, type UserAuthStatus } from "./auth-logs";
@@ -32,8 +32,8 @@ export interface UserManagementInfo {
 
 export async function getUserManagementData(): Promise<UserManagementInfo[]> {
   const userEmails = await listNonAdminUserEmails();
-  const authStatuses = getUserAuthStatuses();
-  const devicePreferences = listDevicePreferences();
+  const authStatuses = await getUserAuthStatuses();
+  const devicePreferences = await listDevicePreferences();
   
   const statusMap = new Map<string, UserAuthStatus>();
   for (const status of authStatuses) {
@@ -46,7 +46,7 @@ export async function getUserManagementData(): Promise<UserManagementInfo[]> {
     const normalizedEmail = email.toLowerCase();
     const userRecord = await findUser(email);
     const authStatus = statusMap.get(normalizedEmail);
-    const assignedDeviceId = getAssignedDeviceId(email);
+    const assignedDeviceId = await getAssignedDeviceId(email);
     
     // Get assigned device info
     let assignedDevice: UserDeviceInfo | undefined;
@@ -55,21 +55,25 @@ export async function getUserManagementData(): Promise<UserManagementInfo[]> {
       const userLabel = devicePref?.labelsByUser?.[normalizedEmail];
       const defaultLabel = devicePref?.label;
       const userThresholds = devicePref?.thresholdsByUser?.[normalizedEmail];
-      const reading = getLatestReading(assignedDeviceId);
+      const reading = await getLatestReading(assignedDeviceId);
       
-      assignedDevice = {
-        deviceId: assignedDeviceId,
-        roomLabel: userLabel ?? defaultLabel ?? "Unlabeled Room",
-        thresholds: userThresholds ? {
-          lowC: userThresholds.lowC,
-          highC: userThresholds.highC,
-        } : undefined,
-        lastReading: reading ? {
-          temperatureC: reading.temperatureC,
-          humidityPct: reading.humidityPct,
-          timestamp: reading.ts,
-        } : undefined,
-      };
+      try {
+        assignedDevice = {
+          deviceId: assignedDeviceId,
+          roomLabel: userLabel ?? defaultLabel ?? "Unlabeled Room",
+          thresholds: userThresholds ? {
+            lowC: userThresholds.lowC,
+            highC: userThresholds.highC,
+          } : undefined,
+          lastReading: reading ? {
+            temperatureC: reading.temperatureC,
+            humidityPct: reading.humidityPct,
+            timestamp: reading.ts,
+          } : undefined,
+        };
+      } catch (error) {
+        throw error;
+      }
     }
     
     // Get all devices this user monitors (has custom labels/thresholds for)
@@ -80,20 +84,25 @@ export async function getUserManagementData(): Promise<UserManagementInfo[]> {
       const userThresholds = devicePref.thresholdsByUser?.[normalizedEmail];
       
       if (userLabel || userThresholds) {
-        const reading = getLatestReading(deviceId);
-        monitoredDevices.push({
-          deviceId,
-          roomLabel: userLabel ?? devicePref.label ?? "Unlabeled Room",
-          thresholds: userThresholds ? {
-            lowC: userThresholds.lowC,
-            highC: userThresholds.highC,
-          } : undefined,
-          lastReading: reading ? {
-            temperatureC: reading.temperatureC,
-            humidityPct: reading.humidityPct,
-            timestamp: reading.ts,
-          } : undefined,
-        });
+        const reading = await getLatestReading(deviceId);
+        
+        try {
+          monitoredDevices.push({
+            deviceId,
+            roomLabel: userLabel ?? devicePref.label ?? "Unlabeled Room",
+            thresholds: userThresholds ? {
+              lowC: userThresholds.lowC,
+              highC: userThresholds.highC,
+            } : undefined,
+            lastReading: reading ? {
+              temperatureC: reading.temperatureC,
+              humidityPct: reading.humidityPct,
+              timestamp: reading.ts,
+            } : undefined,
+          });
+        } catch (error) {
+          throw error;
+        }
       }
     }
     

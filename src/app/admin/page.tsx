@@ -19,7 +19,7 @@ export const dynamic = "force-dynamic";
 
 export default async function AdminLogsPage() {
   const session = await requireAdminSession();
-  const logs = listAuthLogs(200);
+  const logs = await listAuthLogs(200);
   
   async function handleDelete(formData: FormData) {
     "use server";

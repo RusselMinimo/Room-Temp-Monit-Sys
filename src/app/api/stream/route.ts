@@ -8,7 +8,7 @@ export const dynamic = "force-dynamic";
 export async function GET(_req: NextRequest) {
   const session = await getSession();
   const isAdmin = session ? isAdminEmail(session.email) : false;
-  const assigned = session && !isAdmin ? getAssignedDeviceId(session.email) : undefined;
+  const assigned = session && !isAdmin ? await getAssignedDeviceId(session.email) : undefined;
   const stream = new ReadableStream<Uint8Array>({
     start(controller) {
       const encoder = new TextEncoder();
@@ -18,19 +18,23 @@ export async function GET(_req: NextRequest) {
       const heartbeat = setInterval(() => send(`: ping\n\n`), 15000);
 
       const unsubscribe = subscribeToReadings((reading) => {
-        // Scope events for non-admins to their assigned device.
-        // Admin dashboard should not receive demo readings.
-        if (!isAdmin) {
-          if (reading.isDemo === true) {
-            // allow
-          } else if (!assigned || reading.deviceId !== assigned) {
-            return; // drop events for other rooms
+        try {
+          // Scope events for non-admins to their assigned device.
+          // Admin dashboard should not receive demo readings.
+          if (!isAdmin) {
+            if (reading.isDemo === true) {
+              // allow
+            } else if (!assigned || reading.deviceId !== assigned) {
+              return; // drop events for other rooms
+            }
+          } else if (reading.isDemo === true) {
+            return; // drop demo events for admin
           }
-        } else if (reading.isDemo === true) {
-          return; // drop demo events for admin
+          const data = JSON.stringify(reading);
+          send(`data: ${data}\n\n`);
+        } catch (error) {
+          console.error("[stream] Error sending reading:", error);
         }
-        const data = JSON.stringify(reading);
-        send(`data: ${data}\n\n`);
       });
 
       // Close handling
